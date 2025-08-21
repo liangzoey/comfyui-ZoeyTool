@@ -13,7 +13,8 @@ pip install -r requirements.txt
 以下是基于您提供的 ​​Zoey Tool​​ 功能截图整理的 ​​完整使用指南​​，涵盖各模块核心功能与操作说明：
 ￼
 🖼️ ​​一、图像处理工具​​
-​​1. 多文件批量处理器​​
+​​1. 多文件批量处理器​​<img width="1599" height="1083" alt="56beb106be48d8e11a4b6e982c000c0b" src="https://github.com/user-attachments/assets/50dea99e-4591-4d2c-a43f-73f9cee717fd" />
+
 https://via.placeholder.com/400x200/333/FFF?text=Zoey-多文件批量处理器
 ​​功能​​：批量重命名/转换文件格式
 ​​参数配置​​：
