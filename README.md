@@ -1,4 +1,4 @@
-<img width="2031" height="1117" alt="533dd1c4b717b6cdefd4ebe2f33f1ed5" src="https://github.com/user-attachments/assets/4f920b16-f297-4b5f-a5ec-d84398b77ad6" />﻿# ZoeyTool Plugin​​
+﻿# ZoeyTool Plugin​​
 # 进入 ComfyUI 自定义插件目录 | Navigate to ComfyUI custom_nodes directory
 cd ComfyUI/custom_nodes
 
@@ -166,5 +166,6 @@ top_crop: 0
 bottom_crop: 0  
 preserve_names: true  # 保留原文件名  
 prefix: cropped_  # 输出文件名前缀
+
 
 
