@@ -1,4 +1,4 @@
-﻿# ZoeyTool Plugin​​
+<img width="2031" height="1117" alt="533dd1c4b717b6cdefd4ebe2f33f1ed5" src="https://github.com/user-attachments/assets/4f920b16-f297-4b5f-a5ec-d84398b77ad6" />﻿# ZoeyTool Plugin​​
 # 进入 ComfyUI 自定义插件目录 | Navigate to ComfyUI custom_nodes directory
 cd ComfyUI/custom_nodes
 
@@ -33,7 +33,10 @@ sort_method: filename  # 按文件名排序
 ​​输出​​：
 •
 file_list：生成文件路径列表 → 连接至预览模块
-​​2. 多功能图像编辑器​​
+
+
+​​2. 多功能图像编辑器​​<img width="2031" height="1117" alt="533dd1c4b717b6cdefd4ebe2f33f1ed5" src="https://github.com/user-attachments/assets/1a70602e-29e1-41be-af69-779eff767f18" />
+
 https://via.placeholder.com/400x200/333/FFF?text=多功能图像编辑器
 ​​操作类型​​：
 •
@@ -51,7 +54,10 @@ yaml
 阈值: 128  # 二值化阈值
 ￼
 ￼
-​​3. 遮罩边界框绘制​​
+
+
+​​3. 遮罩边界框绘制​​<img width="3140" height="1224" alt="594ee600d6e5042a26317acc2f7ca0ae" src="https://github.com/user-attachments/assets/e3f8af5e-0051-4f43-a363-7dd27b195cc0" />
+
 https://via.placeholder.com/400x200/333/FFF?text=遮罩边界框绘制
 ​​输入​​：图像 + 遮罩
 ​​绘制参数​​：
@@ -67,7 +73,10 @@ yaml
 ￼
 ​​输出​​：带边界框的图像（尺寸不变）
 ￼
-🎥 ​​二、视频处理工具​​
+
+
+🎥 ​​二、视频处理工具<img width="2686" height="750" alt="c3084c330435deac0cac0d2f5cc204bf" src="https://github.com/user-attachments/assets/255ecb66-409d-4ea0-99f7-d0f9a72125cf" />
+
 ​​1. 批量视频加载器​​
 https://via.placeholder.com/400x200/333/FFF?text=批量视频加载器
 ​​配置​​：
@@ -107,8 +116,13 @@ start_index: 1  # 起始编号
 ￼
 ￼
 ￼
+
+
 🌐 ​​三、辅助工具​​
-​​1. 纯净翻译器​​
+
+
+​​1. 纯净翻译器​​<img width="2535" height="1137" alt="dc4e6a1eaa54692dd652478e9bf1e27e" src="https://github.com/user-attachments/assets/1dd23b6b-4700-40c6-b10f-b34c082f0f70" />
+
 https://via.placeholder.com/400x200/333/FFF?text=纯净翻译器
 ​​配置​​：
 yaml
@@ -121,7 +135,10 @@ engine: 内置模型  # 或百度API/谷歌API
 输入: "你好" → 输出: "Hello."
 ￼
 ￼
-​​2. 图像编辑提示词生成器​​
+
+
+​​2. 图像编辑提示词生成器​​<img width="2296" height="975" alt="adad1ed13ca0ce85459c4b1cc1f53557" src="https://github.com/user-attachments/assets/d21bdafb-1184-4fb6-833c-1d5032ae4f24" />
+
 https://via.placeholder.com/400x200/333/FFF?text=提示词生成器
 ​​用例​​：
 yaml
@@ -134,7 +151,9 @@ yaml
 自定义提示词: "把头巾替换为帽子"
 ￼
 ￼
-​​3. 图像批量裁剪器​​
+​​
+3. 图像批量裁剪器​​<img width="1317" height="1238" alt="df58da40f83a28039aeb86fc24c24ee5" src="https://github.com/user-attachments/assets/8f7d4d72-2550-4c2f-a616-11398999e86f" />
+
 https://via.placeholder.com/400x200/333/FFF?text=图像批量裁剪器
 ​​裁剪参数​​：
 yaml
@@ -147,4 +166,5 @@ top_crop: 0
 bottom_crop: 0  
 preserve_names: true  # 保留原文件名  
 prefix: cropped_  # 输出文件名前缀
+
 
