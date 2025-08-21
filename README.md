@@ -8,6 +8,8 @@ git clone https://github.com/liangzoey/comfyui-ZoeyTool.git
 # 安装依赖 | Install dependencies
 cd comfyui-ZoeyTool
 pip install -r requirements.txt
+
+
 以下是基于您提供的 ​​Zoey Tool​​ 功能截图整理的 ​​完整使用指南​​，涵盖各模块核心功能与操作说明：
 ￼
 🖼️ ​​一、图像处理工具​​
@@ -144,3 +146,4 @@ top_crop: 0
 bottom_crop: 0  
 preserve_names: true  # 保留原文件名  
 prefix: cropped_  # 输出文件名前缀
+
