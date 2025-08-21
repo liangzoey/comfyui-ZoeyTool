@@ -1,29 +1,4 @@
-﻿# ZoeyTool Plugin
-以下是 ​​ZOEY TOOL​​（ComfyUI 多功能插件工具包）的安装步骤，支持 Windows/Linux/macOS 环境：
-
-​​Installation Steps for ZOEY TOOL​​ (ComfyUI multi-functional plugin toolkit), compatible with Windows/Linux/macOS.
-
-🔧 ​​一、环境准备 | Environment Preparation​​
-1.
-​​系统要求 | System Requirements​​
-
-•
-​​ComfyUI​​ 已安装（官方推荐版本 ≥1.7）
-
-ComfyUI installed (official recommended version ≥1.7)
-
-•
-​​Python​​ ≥3.8（ComfyUI 便携版已预装）
-
-Python ≥3.8 (pre-installed in ComfyUI portable version)
-
-•
-​​Git​​（用于克隆仓库）
-
-Git (for cloning repository)
-
-📥 ​​二、安装方法 | Installation Methods​​
-​​方法一：Git 克隆安装（推荐） | Method 1: Git Clone (Recommended)​​
+﻿# ZoeyTool Plugin​​
 # 进入 ComfyUI 自定义插件目录 | Navigate to ComfyUI custom_nodes directory
 cd ComfyUI/custom_nodes
 
@@ -33,133 +8,139 @@ git clone https://github.com/liangzoey/comfyui-ZoeyTool.git
 # 安装依赖 | Install dependencies
 cd comfyui-ZoeyTool
 pip install -r requirements.txt
-​​方法二：手动下载安装 | Method 2: Manual Download​​
-1.
-下载 ZOEY TOOL 压缩包
-
-Download ZOEY TOOL ZIP
-
-2.
-解压到 ComfyUI/custom_nodes目录
-
-Extract to ComfyUI/custom_nodesdirectory
-
-3.
-重命名文件夹为 comfyui-ZoeyTool
-
-Rename folder to comfyui-ZoeyTool
-
-4.
-终端安装依赖：
-
-Install dependencies via terminal:
-
-cd ComfyUI/custom_nodes/comfyui-ZoeyTool
-pip install -r requirements.txt
-⚙️ ​​三、依赖说明 | Dependency Instructions​​
+以下是基于您提供的 ​​Zoey Tool​​ 功能截图整理的 ​​完整使用指南​​，涵盖各模块核心功能与操作说明：
+￼
+🖼️ ​​一、图像处理工具​​
+​​1. 多文件批量处理器​​
+https://via.placeholder.com/400x200/333/FFF?text=Zoey-多文件批量处理器
+​​功能​​：批量重命名/转换文件格式
+​​参数配置​​：
+yaml
+￼
+复制
+
+input_folder: 输入目录路径  
+output_folder: 输出目录路径  
+name_prefix: FILE  # 文件名前缀  
+file_types: jpg,png,txt,pdf,doc  # 支持格式  
+start_index: 1  # 起始序号  
+sort_method: filename  # 按文件名排序
+￼
+￼
+​​输出​​：
 •
-​​核心依赖 | Core Dependencies​​（自动安装）:
-
-torch>=2.0.0        # 深度学习框架 | Deep learning framework
-Pillow>=10.0.0      # 图像处理 | Image processing
-opencv-python-headless>=4.8.0  # 计算机视觉 | Computer vision
-
+file_list：生成文件路径列表 → 连接至预览模块
+​​2. 多功能图像编辑器​​
+https://via.placeholder.com/400x200/333/FFF?text=多功能图像编辑器
+​​操作类型​​：
 •
-​​可选依赖 | Optional Dependencies​​:
-
+水平翻转、锐化（强度1.5）、模糊（半径5.0）
 •
-视频处理需安装 ffmpeg（官网下载）
-
-For video processing: Install ffmpeg(official site)
-
-•
-多语言翻译需 transformers（已包含在 requirements.txt）
-
-For multilingual translation: transformers(included in requirements.txt)
-
-🔄 ​​四、重启与验证 | Restart & Validation​​
-1.
-​​重启 ComfyUI | Restart ComfyUI​​
-
-•
-Windows: 关闭并重新运行 run_nvidia_gpu.bat
-
-Close and rerun run_nvidia_gpu.bat
-
-•
-Linux/macOS: 重启服务 systemctl restart comfyui
-
-Restart service: systemctl restart comfyui
-
-2.
-​​验证安装 | Verify Installation​​
-
-启动 ComfyUI 后，在节点列表搜索关键词：
-
-After starting ComfyUI, search for these keywords in the node list:
-
-•
-ZoeyMaskDrawBox（遮罩绘制 | Mask drawing）
-
-•
-BatchImageCropper（批量裁剪 | Batch cropping）
-
-•
-WanPromptGenerator（影视提示词 | Film prompt generation）
-
-•
-​​若节点可见，表示安装成功 ✅​​
-
-If nodes are visible, installation is successful ✅
-
-⚠️ ​​五、常见问题解决 | Troubleshooting​​
-​​问题现象​​
-
-​​解决方案​​
-
-​​节点未显示​​
-Nodes not visible
-
-检查 custom_nodes目录名是否一致；确认 __init__.py存在并导入节点类
-Check directory name matches; ensure __init__.pyimports node classes
-
-​​依赖安装失败​​
-Dependency install failed
-
-手动安装：pip install 库名==版本号（参考 requirements.txt）
-Manually install: pip install library==version(see requirements.txt)
-
-​​GPU 加速不可用​​
-GPU acceleration unavailable
-
-重装 CUDA 版 Torch：
-pip uninstall torch && pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-💡 ​​六、进阶配置 | Advanced Configuration​​
-1.
-​​自定义节点路径​​
-
-Custom node path:
-
-修改 extra_model_paths.yaml：
-
-zoey_tool:
-    base_path: ./custom_nodes/comfyui-ZoeyTool
-2.
-​​工作流模板导入​​
-
-Import workflow templates:
-
-复制 templates/*.json到 ComfyUI 工作流目录，通过 Load按钮加载
-
-Copy templates/*.jsonto ComfyUI workflows directory, load via Loadbutton
-
-​​提示 | Note​​: 安装后建议阅读 README.md查看功能示例。
-
-After installation, read README.mdfor feature examples.
-
-问题反馈：GitHub Issues
-
-Report issues: GitHub Issues
-
-
+分割图像（横向/纵向各2块）
+​​参数示例​​：
+yaml
+￼
+复制
+
+模糊半径: 5.0  
+锐化强度: 1.5  
+融合权重: 0.50  
+阈值: 128  # 二值化阈值
+￼
+￼
+​​3. 遮罩边界框绘制​​
+https://via.placeholder.com/400x200/333/FFF?text=遮罩边界框绘制
+​​输入​​：图像 + 遮罩
+​​绘制参数​​：
+yaml
+￼
+复制
+
+线宽: 10  
+颜色: 红色（#FF0000）  
+边距百分比: 5%  # 边界框内边距  
+填充颜色: 透明（不透明度0）
+￼
+￼
+​​输出​​：带边界框的图像（尺寸不变）
+￼
+🎥 ​​二、视频处理工具​​
+​​1. 批量视频加载器​​
+https://via.placeholder.com/400x200/333/FFF?text=批量视频加载器
+​​配置​​：
+yaml
+￼
+复制
+
+源目录: D:/Videos/Input  
+file_pattern: *.mp4;*.avi;*.mov  # 文件类型  
+limit: 20  # 最大加载数
+￼
+￼
+​​2. 视频批处理器​​
+https://via.placeholder.com/400x200/333/FFF?text=视频批处理器
+​​处理选项​​：
+yaml
+￼
+复制
+
+frame_rate: 30  # 输出帧率  
+output_format: mp4  
+device: auto  # 自动选择GPU/CPU  
+skip_existing: 开启  # 跳过已处理文件
+￼
+￼
+​​3. 智能视频存储器​​
+https://via.placeholder.com/400x200/333/FFF?text=智能视频存储器
+​​存储规则​​：
+yaml
+￼
+复制
+
+output_directory: D:/视频输出  
+prefix: batch  # 文件名前缀  
+date_folder: 启用  # 按日期分类存储  
+start_index: 1  # 起始编号
+￼
+￼
+￼
+🌐 ​​三、辅助工具​​
+​​1. 纯净翻译器​​
+https://via.placeholder.com/400x200/333/FFF?text=纯净翻译器
+​​配置​​：
+yaml
+￼
+复制
+
+source_lang: auto  # 自动检测源语言  
+target_lang: 英文  
+engine: 内置模型  # 或百度API/谷歌API  
+输入: "你好" → 输出: "Hello."
+￼
+￼
+​​2. 图像编辑提示词生成器​​
+https://via.placeholder.com/400x200/333/FFF?text=提示词生成器
+​​用例​​：
+yaml
+￼
+复制
+
+编辑类型: 对象编辑  
+目标元素: 头巾 → 新值: 帽子  
+视角方向: 正面  
+自定义提示词: "把头巾替换为帽子"
+￼
+￼
+​​3. 图像批量裁剪器​​
+https://via.placeholder.com/400x200/333/FFF?text=图像批量裁剪器
+​​裁剪参数​​：
+yaml
+￼
+复制
+
+left_crop: 0   # 左裁剪像素  
+right_crop: 0  
+top_crop: 0  
+bottom_crop: 0  
+preserve_names: true  # 保留原文件名  
+prefix: cropped_  # 输出文件名前缀
