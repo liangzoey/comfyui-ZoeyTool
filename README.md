@@ -170,6 +170,8 @@ bottom_crop: 0
 preserve_names: true  # 保留原文件名  
 prefix: cropped_  # 输出文件名前缀
 
+<img width="851" height="765" alt="f2d98404744a2a339b6502d1c96e0cd9" src="https://github.com/user-attachments/assets/cd6e07ee-13b0-4c04-bffe-bc30c3b9ebe8" />
+
 
 
 
