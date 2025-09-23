@@ -2,11 +2,11 @@ import os
 import sys
 import logging
 
-# ÉèÖÃ²å¼şÄ¿Â¼Â·¾¶
+# è®¾ç½®æ’ä»¶ç›®å½•è·¯å¾„
 plugin_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, plugin_dir)
 
-# ÅäÖÃÈÕÖ¾
+# é…ç½®æ—¥å¿—
 logger = logging.getLogger("ZoeyTool")
 logger.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
@@ -18,27 +18,27 @@ logger.info(f"Loading Zoey Tool plugin from: {plugin_dir}")
 logger.info(f"Plugin directory contents: {os.listdir(plugin_dir)}")
 
 try:
-    # ÏÔÊ½µ¼ÈëËùÓĞÄ£¿é
+    # æ˜¾å¼å¯¼å…¥æ‰€æœ‰æ¨¡å—
     from batch_image_cropper import NODE_CLASS_MAPPINGS as CROPPER_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as CROPPER_DISPLAY
     from zoey_tool import NODE_CLASS_MAPPINGS as ZOEY_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as ZOEY_DISPLAY
     from multifunctional_image_editor import NODE_CLASS_MAPPINGS as EDITOR_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as EDITOR_DISPLAY
     from image_edit_prompt_generator import NODE_CLASS_MAPPINGS as PROMPT_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
     
-    # ³¢ÊÔµ¼Èëmask_draw_rectangle
+    # å°è¯•å¯¼å…¥mask_draw_rectangle
     try:
         from mask_draw_rectangle import NODE_CLASS_MAPPINGS as MASK_DRAW_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MASK_DRAW_DISPLAY
         logger.info("Successfully imported mask_draw_rectangle module")
     except ImportError as e:
         logger.error(f"Failed to import mask_draw_rectangle: {str(e)}")
-        # »ØÍË·½°¸£º¶¨Òå¿ÕÓ³Éä
+        # å›é€€æ–¹æ¡ˆï¼šå®šä¹‰ç©ºæ˜ å°„
         MASK_DRAW_MAPPINGS = {}
         MASK_DRAW_DISPLAY = {}
     
-    # ½«ĞÂµÄÕÚÕÖ»æÖÆ½ÚµãÓ³ÉäÌí¼Óµ½ZOEY_MAPPINGSÖĞ
+    # å°†æ–°çš„é®ç½©ç»˜åˆ¶èŠ‚ç‚¹æ˜ å°„æ·»åŠ åˆ°ZOEY_MAPPINGSä¸­
     ZOEY_MAPPINGS.update(MASK_DRAW_MAPPINGS)
     ZOEY_DISPLAY.update(MASK_DRAW_DISPLAY)
     
-    # ºÏ²¢ËùÓĞÓ³Éä
+    # åˆå¹¶æ‰€æœ‰æ˜ å°„
     NODE_CLASS_MAPPINGS = {
         **CROPPER_MAPPINGS,
         **ZOEY_MAPPINGS,
@@ -59,7 +59,7 @@ try:
 
 except Exception as e:
     logger.exception(f"Critical error loading Zoey Tool plugin: {str(e)}")
-    # È·±£¼´Ê¹²¿·ÖÊ§°ÜÒ²Ìá¹©¿ÕÓ³Éä
+    # ç¡®ä¿å³ä½¿éƒ¨åˆ†å¤±è´¥ä¹Ÿæä¾›ç©ºæ˜ å°„
     NODE_CLASS_MAPPINGS = {}
     NODE_DISPLAY_NAME_MAPPINGS = {}
     __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
