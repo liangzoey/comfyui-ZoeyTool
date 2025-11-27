@@ -768,7 +768,8 @@ class PureTranslator:
 class GuaranteedBatchSaver:
     """
     确保批量完整保存器 - 解决15张只保存10张的问题
-    支持自定义起始序号和TXT开关控制
+    支持自定义起始序号
+    新增：支持开关控制是否保存txt文件（默认开启）
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -781,7 +782,7 @@ class GuaranteedBatchSaver:
                 "digits": ("INT", {"default": 5, "min": 1, "max": 8}),
                 "text_suffix": ("STRING", {"default": "txt"}),
                 "start_index": ("INT", {"default": 1, "min": 0, "step": 1}),
-                "save_txt": ("BOOLEAN", {"default": True, "label_on": "启用", "label_off": "禁用"}),  # 明确开关标签
+                "save_txt": ("BOOLEAN", {"default": True})  # ← 新增开关
             },
             "optional": {
                 "txte": ("STRING", {"multiline": True, "default": ""}),
@@ -826,8 +827,7 @@ class GuaranteedBatchSaver:
     def guaranteed_batch_save(self, images, save_path, prefix, separator, 
                              digits, text_suffix, start_index=1,
                              txte="", texts="", batch_name="train",
-                             save_txt=True):  # 确保参数正确传递
-        
+                             save_txt=True):  # ← 新增参数
         os.makedirs(save_path, exist_ok=True)
         batch_size = images.shape[0] if images.dim() == 4 else 1
         current_time = time.time()
@@ -835,11 +835,10 @@ class GuaranteedBatchSaver:
         # 双重机制 + 自定义起始序号逻辑
         if batch_size > 10 or (current_time - self.last_save_time > 5):
             auto_index = self.get_safe_start_index(save_path, prefix, separator, digits)
-            # 优先使用用户设置的起始序号（若大于自动计算的序号）
             start_index = max(auto_index, start_index)
             self.file_count_map[save_path] = start_index
         else:
-            start_index = self.file_count_map.get(save_path, start_index)  # 延续上次序号
+            start_index = self.file_count_map.get(save_path, start_index)
         
         full_prefix = f"{batch_name}{separator}{prefix}" if batch_name else prefix
         
@@ -849,7 +848,7 @@ class GuaranteedBatchSaver:
             formatted_index = self.format_index(current_index, digits)
             base_filename = f"{full_prefix}{separator}{formatted_index}"
             
-            # 保存图像
+            # 保存图像（始终执行）
             img_data = images[i] if images.dim() == 4 else images
             img_data = img_data.cpu().numpy() * 255.0
             img_data = np.clip(img_data, 0, 255).astype(np.uint8)
@@ -857,18 +856,16 @@ class GuaranteedBatchSaver:
             img_path = os.path.join(save_path, f"{base_filename}.png")
             img_pil.save(img_path)
             
-            # 关键修复：根据save_txt开关控制TXT输出
+            # 条件保存文本文件（受 save_txt 控制）
             if save_txt:
-                # 保存主文本文件
-                txt_path = os.path.join(save_path, f"{base_filename}.{text_suffix}")
-                with open(txt_path, "w", encoding="utf-8") as f:
-                    f.write(txte.strip())
+                txte_path = os.path.join(save_path, f"{base_filename}{separator}{text_suffix}.txt")
+                with open(txte_path, "w", encoding="utf-8") as f:
+                    f.write(txte)
                 
-                # 保存备用文本文件（仅当有内容时）
                 if texts.strip():
-                    alt_path = os.path.join(save_path, f"{base_filename}_alt.{text_suffix}")
-                    with open(alt_path, "w", encoding="utf-8") as f:
-                        f.write(texts.strip())
+                    texts_path = os.path.join(save_path, f"{base_filename}{separator}{text_suffix}_alt.txt")
+                    with open(texts_path, "w", encoding="utf-8") as f:
+                        f.write(texts)
             
             saved_count += 1
         
