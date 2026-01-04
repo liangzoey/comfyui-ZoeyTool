@@ -1,4 +1,4 @@
-﻿import os
+import os
 import torch
 import numpy as np
 import glob
@@ -768,7 +768,7 @@ class PureTranslator:
 class GuaranteedBatchSaver:
     """
     确保批量完整保存器 - 解决15张只保存10张的问题
-    支持自定义起始序号
+    支持自定义起始序号（严格按用户指定值开始）
     新增：支持开关控制是否保存txt文件（默认开启）
     """
     @classmethod
@@ -799,27 +799,8 @@ class GuaranteedBatchSaver:
     
     def __init__(self):
         self.last_save_time = 0
-        self.file_count_map = {}
+        self.file_count_map = {}  # 用于连续调用时递增，但首次以 start_index 为准
     
-    def get_safe_start_index(self, save_path, prefix, separator, digits):
-        """安全获取下一个起始序号（兼容手动设置）"""
-        if not os.path.exists(save_path):
-            return 0
-        
-        all_files = os.listdir(save_path)
-        pattern = re.compile(rf"^{re.escape(prefix)}{re.escape(separator)}(\d{{{digits}}})")
-        max_index = -1
-        for filename in all_files:
-            match = pattern.match(filename)
-            if match:
-                try:
-                    file_index = int(match.group(1))
-                    if file_index > max_index:
-                        max_index = file_index
-                except ValueError:
-                    continue
-        return max_index + 1 if max_index >= 0 else 0
-
     def format_index(self, index, digits):
         """根据digits参数格式化序号"""
         return str(index).zfill(digits) if digits > 1 else str(index)
@@ -827,28 +808,29 @@ class GuaranteedBatchSaver:
     def guaranteed_batch_save(self, images, save_path, prefix, separator, 
                              digits, text_suffix, start_index=1,
                              txte="", texts="", batch_name="train",
-                             save_txt=True):  # ← 新增参数
+                             save_txt=True):
         os.makedirs(save_path, exist_ok=True)
         batch_size = images.shape[0] if images.dim() == 4 else 1
-        current_time = time.time()
         
-        # 双重机制 + 自定义起始序号逻辑
-        if batch_size > 10 or (current_time - self.last_save_time > 5):
-            auto_index = self.get_safe_start_index(save_path, prefix, separator, digits)
-            start_index = max(auto_index, start_index)
-            self.file_count_map[save_path] = start_index
-        else:
-            start_index = self.file_count_map.get(save_path, start_index)
+        # ✅ 关键修改：始终以用户指定的 start_index 为起点
+        # 如果是首次保存该路径，或希望强制从 start_index 开始，则覆盖 map 中的值
+        # 这里我们选择：每次调用都以传入的 start_index 为基准（不依赖历史）
+        current_start = start_index
+        
+        # 如果你希望在同一路径连续调用时自动递增（比如第一次调用 start_index=1 保存5张，
+        # 第二次调用仍用 start_index=1 但想接着6开始），可启用下面两行；否则注释掉。
+        # if save_path in self.file_count_map:
+        #     current_start = self.file_count_map[save_path]
         
         full_prefix = f"{batch_name}{separator}{prefix}" if batch_name else prefix
         
         saved_count = 0
         for i in range(batch_size):
-            current_index = start_index + i
+            current_index = current_start + i
             formatted_index = self.format_index(current_index, digits)
             base_filename = f"{full_prefix}{separator}{formatted_index}"
             
-            # 保存图像（始终执行）
+            # 保存图像
             img_data = images[i] if images.dim() == 4 else images
             img_data = img_data.cpu().numpy() * 255.0
             img_data = np.clip(img_data, 0, 255).astype(np.uint8)
@@ -856,7 +838,7 @@ class GuaranteedBatchSaver:
             img_path = os.path.join(save_path, f"{base_filename}.png")
             img_pil.save(img_path)
             
-            # 条件保存文本文件（受 save_txt 控制）
+            # 条件保存文本文件
             if save_txt:
                 txte_path = os.path.join(save_path, f"{base_filename}{separator}{text_suffix}.txt")
                 with open(txte_path, "w", encoding="utf-8") as f:
@@ -869,9 +851,10 @@ class GuaranteedBatchSaver:
             
             saved_count += 1
         
-        # 更新状态
-        self.last_save_time = current_time
-        self.file_count_map[save_path] = start_index + batch_size
+        # 更新连续调用的计数器（可选）
+        self.file_count_map[save_path] = current_start + batch_size
+        self.last_save_time = time.time()
+        
         return (images,)
 # ======================
 # 节点注册
