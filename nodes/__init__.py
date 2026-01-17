@@ -2,64 +2,6 @@ import os
 import sys
 import logging
 
-# 获取插件根目录
-plugin_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, plugin_dir)
-
-# 配置日志
-logger = logging.getLogger("ZoeyTool")
-logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-logger.info(f"Loading Zoey Tool plugin from: {plugin_dir}")
-
-# ✅ 正确方式：从 .nodes 子模块导入
-try:
-    from .nodes.batch_image_cropper import NODE_CLASS_MAPPINGS as CROPPER_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as CROPPER_DISPLAY
-    from .nodes.zoey_tool import NODE_CLASS_MAPPINGS as ZOEY_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as ZOEY_DISPLAY
-    from .nodes.multifunctional_image_editor import NODE_CLASS_MAPPINGS as EDITOR_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as EDITOR_DISPLAY
-    from .nodes.image_edit_prompt_generator import NODE_CLASS_MAPPINGS as PROMPT_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
-    
-    # 导入 mask_draw_rectangle
-    try:
-        from .nodes.mask_draw_rectangle import NODE_CLASS_MAPPINGS as MASK_DRAW_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MASK_DRAW_DISPLAY
-        logger.info("Successfully imported mask_draw_rectangle module")
-    except ImportError as e:
-        logger.error(f"Failed to import mask_draw_rectangle: {str(e)}")
-        MASK_DRAW_MAPPINGS = {}
-        MASK_DRAW_DISPLAY = {}
-    
-    # 合并（注意：不要把 MASK_DRAW 合进 ZOEY，除非你本意如此）
-    NODE_CLASS_MAPPINGS = {
-        **CROPPER_MAPPINGS,
-        **ZOEY_MAPPINGS,
-        **EDITOR_MAPPINGS,
-        **PROMPT_MAPPINGS,
-        **MASK_DRAW_MAPPINGS  # ← 单独加在这里更清晰
-    }
-    
-    NODE_DISPLAY_NAME_MAPPINGS = {
-        **CROPPER_DISPLAY,
-        **ZOEY_DISPLAY,
-        **EDITOR_DISPLAY,
-        **PROMPT_DISPLAY,
-        **MASK_DRAW_DISPLAY
-    }
-    
-    __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
-    logger.info("Zoey Tool plugin loaded successfully")
-
-except Exception as e:
-    logger.exception(f"Critical error loading Zoey Tool plugin: {str(e)}")
-    NODE_CLASS_MAPPINGS = {}
-    NODE_DISPLAY_NAME_MAPPINGS = {}
-    __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']import os
-import sys
-import logging
-
 # 设置插件目录路径
 plugin_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, plugin_dir)
