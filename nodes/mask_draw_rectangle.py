@@ -19,6 +19,8 @@ class ZoeyMaskDrawBox:
             "optional": {
                 "填充": (["否", "是"], {"default": "否"}),
                 "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                 # === 新增层级位置控制 ===
+                "层级位置": (["前景", "主体后方"], {"default": "前景"}),
                 # ===== 颜色模式切换 =====
                 "颜色模式": (["预设", "调色盘", "HEX"], {"default": "预设"}),
                 # 预设颜色（当颜色模式=预设时使用）
@@ -43,7 +45,7 @@ class ZoeyMaskDrawBox:
     CATEGORY = "Zoey工具集/图像编辑"
 
     def 绘制方框(self, 图像, 遮罩, 线宽, 填充="否", 不透明度=1.0,
-               颜色模式="预设", 颜色预设="红色", 自定义颜色=(1.0, 0.0, 0.0), HEX颜色="#ff0000",
+               层级位置="前景", 颜色模式="预设", 颜色预设="红色", 自定义颜色=(1.0, 0.0, 0.0), HEX颜色="#ff0000",
                亮度=1.0, 饱和度=1.0, 边距百分比=5.0):
 
         # 默认颜色：红色
@@ -114,15 +116,41 @@ class ZoeyMaskDrawBox:
                 结果图像.append(torch.from_numpy(np.array(img.convert('RGB'))).float() / 255.0)
                 continue
 
-            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
+                        # 核心逻辑：根据层级位置处理
+            if 层级位置 == "主体后方":
+                # A. 抠出主体
+                mask_np = (mask.cpu().numpy() * 255).astype(np.uint8)
+                if mask_np.ndim == 2:
+                    mask_img = Image.fromarray(mask_np, mode='L')
+                else:
+                    mask_img = Image.fromarray(mask_np[:, :, 0], mode='L') if mask_np.ndim == 3 else Image.fromarray(mask_np, mode='L')
 
-            if 填充 == "是":
-                draw.rectangle(bbox, fill=rgba, outline=rgba[:3], width=线宽)
+                subject = img.copy()
+                subject.putalpha(mask_img)
+
+                # B. 绘制色块
+                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                draw = ImageDraw.Draw(overlay)
+                if 填充 == "是":
+                    draw.rectangle(bbox, fill=rgba, outline=rgba[:3], width=线宽)
+                else:
+                    draw.rectangle(bbox, outline=rgba, width=线宽)
+
+                # C. 合成：原图 + 色块 + 主体
+                bg_with_box = Image.alpha_composite(img, overlay)
+                final_img = Image.alpha_composite(bg_with_box, subject)
+                img = final_img.convert('RGB')
+
             else:
-                draw.rectangle(bbox, outline=rgba, width=线宽)
+                # 前景模式：直接绘制
+                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                draw = ImageDraw.Draw(overlay)
+                if 填充 == "是":
+                    draw.rectangle(bbox, fill=rgba, outline=rgba[:3], width=线宽)
+                else:
+                    draw.rectangle(bbox, outline=rgba, width=线宽)
+                img = Image.alpha_composite(img, overlay).convert('RGB')
 
-            img = Image.alpha_composite(img, overlay).convert('RGB')
             tensor = torch.from_numpy(np.array(img).astype(np.float32)) / 255.0
             结果图像.append(tensor)
 
