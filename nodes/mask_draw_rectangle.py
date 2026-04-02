@@ -1,10 +1,39 @@
 import torch
 import numpy as np
 from PIL import Image, ImageDraw
-import colorsys
 import logging
+import os
+import requests
 
 logger = logging.getLogger("ZoeyTool")
+
+# ===== 背景移除支持 =====
+try:
+    from rembg import remove
+    HAS_REMBG = True
+except ImportError:
+    HAS_REMBG = False
+    logger.warning("未安装 rembg，背景移除功能将不可用。请运行: pip install rembg")
+
+# 模型路径与下载
+RMBG_MODEL_DIR = os.path.join("models", "rembg")
+RMBG_MODEL_PATH = os.path.join(RMBG_MODEL_DIR, "RMBG-1.4.pth")
+RMBG_MODEL_URL = "https://huggingface.co/zhengchong/RMBG-1.4/resolve/main/RMBG-1.4.pth"
+
+def ensure_rmbg_model():
+    if not os.path.exists(RMBG_MODEL_PATH):
+        logger.info(f"RMBG-1.4 模型未找到，正在自动下载至: {RMBG_MODEL_PATH}")
+        os.makedirs(RMBG_MODEL_DIR, exist_ok=True)
+        try:
+            resp = requests.get(RMBG_MODEL_URL, stream=True, timeout=120)
+            resp.raise_for_status()
+            with open(RMBG_MODEL_PATH, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info("✅ RMBG-1.4 模型下载完成！")
+        except Exception as e:
+            logger.error(f"❌ 下载 RMBG-1.4 模型失败: {e}")
+            raise RuntimeError("无法获取背景移除模型，请检查网络或手动放置模型文件。")
 
 
 class ZoeyMaskDrawBox:
@@ -19,23 +48,10 @@ class ZoeyMaskDrawBox:
             "optional": {
                 "填充": (["否", "是"], {"default": "否"}),
                 "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                 # === 新增层级位置控制 ===
-                "层级位置": (["前景", "主体后方"], {"default": "前景"}),
-                # ===== 颜色模式切换 =====
-                "颜色模式": (["预设", "调色盘", "HEX"], {"default": "预设"}),
-                # 预设颜色（当颜色模式=预设时使用）
-                "颜色预设": (
-                    ["红色", "橙色", "黄色", "绿色", "青色", "蓝色", "紫色", "粉色", "白色", "黑色", "灰色"],
-                    {"default": "红色"}
-                ),
-                # 调色盘（当颜色模式=调色盘时使用）—— 使用 ComfyUI 原生 COLOR 滑块
-                "自定义颜色": ("COLOR", {"default": (1.0, 0.0, 0.0)}),  # RGB in [0.0, 1.0]
-                # HEX 输入（当颜色模式=HEX时使用）
-                "HEX颜色": ("STRING", {"default": "#ff0000", "multiline": False}),
-                # 其他参数
-                "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                # ===== 简化后：仅保留自定义颜色 =====
+                "自定义颜色": ("COLOR", {"default": "#ff0000"}), # 默认红色
                 "边距百分比": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 50.0, "step": 0.5}),
+                "启用背景移除": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -44,114 +60,76 @@ class ZoeyMaskDrawBox:
     FUNCTION = "绘制方框"
     CATEGORY = "Zoey工具集/图像编辑"
 
-    def 绘制方框(self, 图像, 遮罩, 线宽, 填充="否", 不透明度=1.0,
-               层级位置="前景", 颜色模式="预设", 颜色预设="红色", 自定义颜色=(1.0, 0.0, 0.0), HEX颜色="#ff0000",
-               亮度=1.0, 饱和度=1.0, 边距百分比=5.0):
+    def 绘制方框(self, 图像, 遮罩, 线宽, 填充="否", 不透明度=1.0, 自定义颜色="#ff0000", 边距百分比=5.0, 启用背景移除=False):
+        
+        # ===== 简化后的颜色处理逻辑 =====
+        # 1. 自定义颜色通常传入的是 HEX 字符串 (如 "#ff0000")
+        # 2. 将 HEX 转换为 RGB 数值
+        try:
+            hex_clean = 自定义颜色.strip().lstrip('#')
+            if len(hex_clean) != 6:
+                raise ValueError("HEX 长度必须为6位")
+            r = int(hex_clean[0:2], 16) 
+            g = int(hex_clean[2:4], 16) 
+            b = int(hex_clean[4:6], 16)
+        except Exception as e:
+            logger.warning(f"自定义颜色 '{自定义颜色}' 格式无效，使用默认红色。错误: {e}")
+            r, g, b = 255, 0, 0
 
-        # 默认颜色：红色
-        r, g, b = 1.0, 0.0, 0.0
-
-        if 颜色模式 == "预设":
-            颜色映射 = {
-                "红色": (0.0, 1.0, 1.0),
-                "橙色": (0.08, 1.0, 1.0),
-                "黄色": (0.16, 1.0, 1.0),
-                "绿色": (0.33, 1.0, 1.0),
-                "青色": (0.5, 1.0, 1.0),
-                "蓝色": (0.66, 1.0, 1.0),
-                "紫色": (0.83, 1.0, 1.0),
-                "粉色": (0.92, 1.0, 1.0),
-                "白色": (0.0, 0.0, 1.0),
-                "黑色": (0.0, 0.0, 0.0),
-                "灰色": (0.0, 0.0, 0.5),
-            }
-            h, s, v = 颜色映射.get(颜色预设, (0.0, 1.0, 1.0))
-            s = min(1.0, max(0.0, s * 饱和度))
-            v = min(1.0, max(0.0, v * 亮度))
-            r, g, b = colorsys.hsv_to_rgb(h, s, v)
-
-        elif 颜色模式 == "调色盘":
-            # 使用原 COLOR 滑块（RGB in [0,1]）
-            try:
-                r = float(自定义颜色[0])
-                g = float(自定义颜色[1])
-                b = float(自定义颜色[2])
-            except (TypeError, IndexError, ValueError):
-                logger.warning("自定义颜色格式无效，使用默认红色")
-                r, g, b = 1.0, 0.0, 0.0
-
-        elif 颜色模式 == "HEX":
-            # 解析 HEX 字符串，如 "#aabbcc" 或 "aabbcc"
-            try:
-                hex_clean = HEX颜色.strip().lstrip('#')
-                if len(hex_clean) != 6:
-                    raise ValueError("HEX 长度必须为6位")
-                r = int(hex_clean[0:2], 16) / 255.0
-                g = int(hex_clean[2:4], 16) / 255.0
-                b = int(hex_clean[4:6], 16) / 255.0
-            except Exception as e:
-                logger.warning(f"HEX颜色 '{HEX颜色}' 格式无效，使用默认红色。错误: {e}")
-                r, g, b = 1.0, 0.0, 0.0
-
-        # 统一应用亮度和饱和度（通过 HSV）
-        h, s, v = colorsys.rgb_to_hsv(r, g, b)
-        s = min(1.0, max(0.0, s * 饱和度))
-        v = min(1.0, max(0.0, v * 亮度))
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        rgba = (int(r * 255), int(g * 255), int(b * 255), int(不透明度 * 255))
+        # 3. 结合不透明度生成 RGBA 元组
+        alpha = int(不透明度 * 255)
+        rgba_color = (r, g, b, alpha)
 
         batch_size, height, width, _ = 图像.shape
         结果图像 = []
 
+        if 启用背景移除 and HAS_REMBG:
+            ensure_rmbg_model()
+
         for i in range(batch_size):
             img_tensor = 图像[i] * 255.0
             img_array = np.clip(img_tensor.cpu().numpy().astype(np.uint8), 0, 255)
-            img = Image.fromarray(img_array).convert('RGBA')
+            original_img = Image.fromarray(img_array).convert('RGB')
 
             mask = 遮罩[i] if 遮罩.dim() == 3 and i < 遮罩.shape[0] else 遮罩.squeeze()
             bbox = self.获取遮罩外接矩形(mask, 边距百分比)
 
             if bbox is None:
                 logger.warning(f"图像 {i} 无有效遮罩区域")
-                结果图像.append(torch.from_numpy(np.array(img.convert('RGB'))).float() / 255.0)
+                结果图像.append(torch.from_numpy(np.array(original_img).astype(np.float32)) / 255.0)
                 continue
 
-                        # 核心逻辑：根据层级位置处理
-            if 层级位置 == "主体后方":
-                # A. 抠出主体
-                mask_np = (mask.cpu().numpy() * 255).astype(np.uint8)
-                if mask_np.ndim == 2:
-                    mask_img = Image.fromarray(mask_np, mode='L')
-                else:
-                    mask_img = Image.fromarray(mask_np[:, :, 0], mode='L') if mask_np.ndim == 3 else Image.fromarray(mask_np, mode='L')
+            # ===== 绘制逻辑 =====
+            overlay = Image.new('RGBA', original_img.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
 
-                subject = img.copy()
-                subject.putalpha(mask_img)
+            effective_fill = None
+            if 填充 == "是":
+                effective_fill = rgba_color # 填充颜色同样受不透明度控制
 
-                # B. 绘制色块
-                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-                draw = ImageDraw.Draw(overlay)
-                if 填充 == "是":
-                    draw.rectangle(bbox, fill=rgba, outline=rgba[:3], width=线宽)
-                else:
-                    draw.rectangle(bbox, outline=rgba, width=线宽)
+            # 绘制矩形
+            draw.rectangle(
+                bbox,
+                fill=effective_fill,
+                outline=rgba_color, # 边框颜色
+                width=线宽
+            )
 
-                # C. 合成：原图 + 色块 + 主体
-                bg_with_box = Image.alpha_composite(img, overlay)
-                final_img = Image.alpha_composite(bg_with_box, subject)
-                img = final_img.convert('RGB')
+            # 合成图像
+            base_with_box = Image.alpha_composite(original_img.convert('RGBA'), overlay)
 
+            if 启用背景移除 and HAS_REMBG:
+                removed_bg_img = remove(
+                    original_img,
+                    model_path=RMBG_MODEL_PATH,
+                    only_mask=False,
+                    post_process_mask=True
+                ).convert("RGBA")
+                final_img = Image.alpha_composite(base_with_box, removed_bg_img).convert('RGB')
             else:
-                # 前景模式：直接绘制
-                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-                draw = ImageDraw.Draw(overlay)
-                if 填充 == "是":
-                    draw.rectangle(bbox, fill=rgba, outline=rgba[:3], width=线宽)
-                else:
-                    draw.rectangle(bbox, outline=rgba, width=线宽)
-                img = Image.alpha_composite(img, overlay).convert('RGB')
+                final_img = base_with_box.convert('RGB')
 
-            tensor = torch.from_numpy(np.array(img).astype(np.float32)) / 255.0
+            tensor = torch.from_numpy(np.array(final_img).astype(np.float32)) / 255.0
             结果图像.append(tensor)
 
         return (torch.stack(结果图像),)
