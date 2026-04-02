@@ -1,8 +1,9 @@
-﻿# zoey_hunyuan_translator.py
+# zoey_hunyuan_translator.py
 # 独立 ComfyUI 节点：腾讯混元 HY-MT1.5 本地化翻译器
-# 模型自动下载并缓存至: F:\ComfyUINeo\ComfyUINeo\models\llm
+# 模型自动下载并缓存至: 从 config.json 配置文件读取
 
 import os
+import json
 import torch
 import time
 from huggingface_hub import snapshot_download
@@ -16,11 +17,23 @@ except ImportError:
 class HunyuanTranslatorNode:
     """腾讯混元 HY-MT1.5 翻译节点 - 自动下载 + 本地加载"""
 
-    # 固定模型存储路径（根据你的需求）
-    LOCAL_MODEL_ROOT = r"F:\ComfyUINeo\ComfyUINeo\models\llm"
-
-    # 类级缓存，避免重复加载
-    _model_cache = {}
+    def __init__(self):
+        # 读取配置文件
+        config_file = os.path.join(os.path.dirname(__file__), 'config.json')
+        
+        if os.path.exists(config_file):
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            # 从配置文件获取模型路径
+            self.LOCAL_MODEL_ROOT = config.get('model_path', 
+                                             os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "llm"))
+        else:
+            # 如果没有配置文件，使用默认路径 - ComfyUI 根目录下的 models/llm 子目录
+            # custom_nodes/comfyui-ZoeyTool/nodes/zoey_hunyuan_translator.py -> ComfyUI/models/llm
+            self.LOCAL_MODEL_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "llm")
+        
+        # 规范化路径，解决跨平台问题
+        self.LOCAL_MODEL_ROOT = os.path.normpath(self.LOCAL_MODEL_ROOT)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -46,8 +59,8 @@ class HunyuanTranslatorNode:
     CATEGORY = "Zoey Tool/文本处理"
     OUTPUT_NODE = True
 
-    def __init__(self):
-        pass
+    # 类级缓存，避免重复加载
+    _model_cache = {}
 
     def _get_lang_code(self, lang_name: str) -> str:
         lang_map = {
@@ -66,6 +79,11 @@ class HunyuanTranslatorNode:
             return local_dir
 
         print(f"[HunyuanTranslator] 本地模型未找到，正在下载 '{model_version}' 到 {local_dir} ...")
+        print(f"[HunyuanTranslator] 当前脚本所在目录: {os.path.dirname(__file__)}")
+        print(f"[HunyuanTranslator] 计算出的模型根目录: {self.LOCAL_MODEL_ROOT}")
+        print(f"[HunyuanTranslator] 最终模型路径: {local_dir}")
+        print(f"[HunyuanTranslator] 当前工作目录: {os.getcwd()}")
+        
         hf_model_map = {
             "HY-MT1.5-1.8B": "tencent/HY-MT1.5-1.8B",
             "HY-MT1.5-7B": "tencent/HY-MT1.5-7B"
@@ -79,12 +97,26 @@ class HunyuanTranslatorNode:
                 local_dir=local_dir,
                 local_dir_use_symlinks=False,
                 resume_download=True,
+                force_download=False,
                 # endpoint="https://hf-mirror.com"  # 如需国内镜像，取消注释
             )
             print(f"[HunyuanTranslator] 模型下载完成: {local_dir}")
             return local_dir
         except Exception as e:
-            raise RuntimeError(f"模型下载失败: {e}. 请检查网络或手动放置模型到 {local_dir}")
+            print(f"[HunyuanTranslator] 下载失败，尝试强制重新下载...")
+            try:
+                snapshot_download(
+                    repo_id=hf_repo_id,
+                    local_dir=local_dir,
+                    local_dir_use_symlinks=False,
+                    resume_download=False,
+                    force_download=True,
+                    # endpoint="https://hf-mirror.com"  # 如需国内镜像，取消注释
+                )
+                print(f"[HunyuanTranslator] 模型强制下载完成: {local_dir}")
+                return local_dir
+            except Exception as e2:
+                raise RuntimeError(f"模型下载失败: {e2}. 请检查网络或手动放置模型到 {local_dir}")
 
     def _load_model(self, model_path: str, device: str):
         cache_key = f"{model_path}_{device}"
@@ -175,8 +207,8 @@ class HunyuanTranslatorNode:
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
         # 提取生成内容（去除 prompt 和系统消息）
-        if "<|im_start|>assistant" in output_text:
-            output_text = output_text.split("<|im_start|>assistant")[-1].strip()
+        if "assistant" in output_text:
+            output_text = output_text.split("assistant")[-1].strip()
         else:
             # 启发式截断输入部分
             output_text = output_text[len(prompt):].strip()
