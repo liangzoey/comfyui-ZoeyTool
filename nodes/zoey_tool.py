@@ -93,7 +93,7 @@ class WanPromptGenerator:
             aesthetics.append(kwargs["光线类型"])
         
         # 时间段
-        if kwargs["时间段"] != "极无":
+        if kwargs["时间段"] != "无":
             aesthetics.append(kwargs["时间段"])
         
         # 景别
@@ -353,7 +353,7 @@ class EnhancedVideoSaver:
                 
                 # 复制视频文件
                 if os.path.exists(video["output"]):
-                    shutil.copy2(video["极output"], video_path)
+                    shutil.copy2(video["output"], video_path)
                 else:
                     raise FileNotFoundError(f"源文件不存在: {video['output']}")
                 
