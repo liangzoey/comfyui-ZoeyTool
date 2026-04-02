@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.log
 .DS_Store
+Nothing should be ignored based on the provided file changes. The modified files are Python source code files (.py) which should not be added to .gitignore according to the rules.
