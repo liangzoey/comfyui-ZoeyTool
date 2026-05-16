@@ -66,8 +66,13 @@ class ZoeyLightHandle:
         mask = mask * mask * (3 - 2 * mask)  # smoothstep
         return mask
 
-    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color):
-        """Draw handle circle on image using light color, return IMAGE tensor."""
+    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, behind_subject=False, subject_mask=None):
+        """Draw handle circle on image using light color, return IMAGE tensor.
+
+        When behind_subject is True, composites the subject (from subject_mask)
+        on top of the handle, so the color block appears behind the subject.
+        This uses the same alpha compositing approach as mask_draw_rectangle.
+        """
         img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np).convert('RGBA')
 
@@ -94,8 +99,30 @@ class ZoeyLightHandle:
         # Center dot
         draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(cr, cg, cb, 255))
 
-        result = Image.alpha_composite(pil_img, overlay).convert('RGB')
-        return torch.from_numpy(np.array(result).astype(np.float32) / 255.0).unsqueeze(0)
+        # Composite handle onto image
+        base_with_handle = Image.alpha_composite(pil_img, overlay)
+
+        # Place subject on top so handle appears behind the subject
+        if behind_subject and subject_mask is not None:
+            # Get subject mask as PIL image
+            if subject_mask.dim() == 3:
+                sub_mask = subject_mask[0]
+            else:
+                sub_mask = subject_mask
+
+            mask_np = (sub_mask.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            mask_pil = Image.fromarray(mask_np).resize((width, height), Image.BILINEAR)
+
+            # Extract subject-only image: original pixels where mask > 0
+            subject_only = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            subject_only.paste(pil_img, (0, 0), mask_pil)
+
+            # Composite subject on top (handle stays behind subject)
+            result = Image.alpha_composite(base_with_handle, subject_only)
+        else:
+            result = base_with_handle
+
+        return torch.from_numpy(np.array(result.convert('RGB')).astype(np.float32) / 255.0).unsqueeze(0)
 
     def generate(self, image, handle_x, handle_y, ball_size, light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False):
         batch_size, height, width, channels = image.shape
@@ -127,8 +154,8 @@ class ZoeyLightHandle:
         # Lighting prompt
         prompt = self._build_prompt(behind_subject)
 
-        # Annotated image output
-        annotated = self._draw_handle_overlay(img, width, height, cx, cy, radius, light_color)
+        # Annotated image output (with behind-subject compositing)
+        annotated = self._draw_handle_overlay(img, width, height, cx, cy, radius, light_color, behind_subject, subject_mask)
 
         # Frontend preview: send ORIGINAL image (JS draws interactive handle)
         image_base64 = ""
