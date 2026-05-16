@@ -7,6 +7,7 @@ Interactive lighting direction control with circular mask generation.
 - Optional behind-subject compositing with subject mask (alpha composite)
 - IMAGE output with handle overlay drawn using light color
 - Multiple handle shapes: circle, square, diamond, triangle
+- Handle opacity controlled by intensity
 """
 
 import torch
@@ -67,10 +68,10 @@ class ZoeyLightHandle:
         mask = mask * mask * (3 - 2 * mask)
         return mask
 
-    def _draw_shape_on_canvas(self, draw, cx, cy, r, cr, cg, cb, shape, img_cx, img_cy):
-        """Draw shape + fill + crosshair + center dot."""
-        fill = (cr, cg, cb, 60)
-        outline = (cr, cg, cb, 255)
+    def _draw_shape_on_canvas(self, draw, cx, cy, r, cr, cg, cb, alpha, shape, img_cx, img_cy):
+        """Draw shape with opacity scaled by alpha (0-255)."""
+        fill = (cr, cg, cb, max(5, int(60 * alpha / 255)))
+        outline = (cr, cg, cb, max(5, int(255 * alpha / 255)))
 
         if shape == "方形":
             draw.rectangle([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=2)
@@ -86,7 +87,7 @@ class ZoeyLightHandle:
         else:  # 圆形
             draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=2)
 
-    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, handle_shape="圆形", behind_subject=False, subject_mask=None):
+    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, intensity=5.0, handle_shape="圆形", behind_subject=False, subject_mask=None):
         img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np).convert('RGBA')
 
@@ -95,22 +96,24 @@ class ZoeyLightHandle:
         cg = int(h[2:4], 16) if len(h) >= 4 else 255
         cb = int(h[4:6], 16) if len(h) >= 6 else 255
 
+        # Intensity → opacity: 0→fully transparent, 10→fully opaque
+        opacity = max(0.05, min(1.0, intensity / 10.0))
+        alpha = int(opacity * 255)
+
         overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         r = max(6, int(radius))
 
-        # Outer glow ring
-        draw.ellipse([cx - r*2, cy - r*2, cx + r*2, cy + r*2], outline=(cr, cg, cb, 60), width=1)
+        # Outer glow ring (only visible when opacity > 0)
+        if alpha > 5:
+            draw.ellipse([cx - r*2, cy - r*2, cx + r*2, cy + r*2], outline=(cr, cg, cb, max(5, alpha // 4)), width=1)
 
-        # Draw the selected shape
-        self._draw_shape_on_canvas(draw, cx, cy, r, cr, cg, cb, handle_shape, width/2, height/2)
+        # Draw the selected shape (opacity controlled by intensity)
+        self._draw_shape_on_canvas(draw, cx, cy, r, cr, cg, cb, alpha, handle_shape, width/2, height/2)
 
-        # Crosshair
-        ch = max(8, int(r * 0.3))
-        draw.line([cx - ch, cy, cx + ch, cy], fill=(255, 255, 255, 200), width=1)
-        draw.line([cx, cy - ch, cx, cy + ch], fill=(255, 255, 255, 200), width=1)
-        # Center dot
-        draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(cr, cg, cb, 255))
+        # Center dot (no crosshair)
+        if alpha > 5:
+            draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(cr, cg, cb, alpha))
 
         # Composite handle onto image
         base_with_handle = Image.alpha_composite(pil_img, overlay)
@@ -125,11 +128,9 @@ class ZoeyLightHandle:
             mask_np = (sub_mask.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
             mask_pil = Image.fromarray(mask_np).resize((width, height), Image.BILINEAR)
 
-            # Extract subject-only image: original pixels where mask > 0
             subject_only = Image.new('RGBA', (width, height), (0, 0, 0, 0))
             subject_only.paste(pil_img, (0, 0), mask_pil)
 
-            # Composite subject on top (handle stays behind subject)
             result = Image.alpha_composite(base_with_handle, subject_only)
         else:
             result = base_with_handle
@@ -169,7 +170,7 @@ class ZoeyLightHandle:
         # Annotated image output
         annotated = self._draw_handle_overlay(
             img, width, height, cx, cy, radius, light_color,
-            handle_shape, behind_subject, subject_mask
+            intensity, handle_shape, behind_subject, subject_mask
         )
 
         # Frontend preview: ORIGINAL image (JS draws interactive handle)

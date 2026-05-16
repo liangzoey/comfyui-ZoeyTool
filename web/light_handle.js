@@ -104,15 +104,13 @@ app.registerExtension({
                         imgNaturalH = img.naturalHeight || img.height;
                         draw();
                     };
-                    img.onerror = () => {
-                        // Don't clear cachedImage on retry failures — keep existing
-                        draw();
-                    };
+                    img.onerror = () => { draw(); };
                     img.src = url;
                 };
 
-                // ── Try to load image from the connected input node ──
-                const tryLoadFromInput = (retriesLeft = 3) => {
+                // ── Try to load image from connected input node ──
+                // Returns true if a source was found (image loading may still be in-flight)
+                const tryLoadFromInput = () => {
                     const imgInput = node.inputs?.find(inp => inp.name === "image");
                     if (!imgInput || imgInput.link == null) return false;
 
@@ -122,15 +120,15 @@ app.registerExtension({
                     const srcNode = app.graph.getNodeById(link[0]);
                     if (!srcNode) return false;
 
-                    // Method 1: cached imgs on the source node (LoadImage, etc.)
+                    // Method 1: cached imgs on source node (LoadImage, etc.)
                     if (srcNode.imgs && srcNode.imgs.length > 0 && srcNode.imgs[0].src) {
                         loadImage(srcNode.imgs[0].src);
                         return true;
                     }
 
-                    // Method 2: widget filename → server /view endpoint
+                    // Method 2: filename widget → ComfyUI /view endpoint
                     const imgWidget = srcNode.widgets?.find(w => w.name === "image");
-                    if (imgWidget && typeof imgWidget.value === "string" && imgWidget.value.match(/\.\w+$/)) {
+                    if (imgWidget && typeof imgWidget.value === "string" && /\.\w+$/.test(imgWidget.value)) {
                         const parts = imgWidget.value.split("/");
                         const fn = parts.pop();
                         const sub = parts.join("/");
@@ -138,15 +136,22 @@ app.registerExtension({
                         return true;
                     }
 
-                    // Retry: imgs might populate asynchronously
-                    if (retriesLeft > 0) {
-                        setTimeout(() => tryLoadFromInput(retriesLeft - 1), 400);
-                    }
                     return false;
                 };
 
+                // Retry wrapper: keeps trying while src not ready (link or imgs)
+                const retryLoad = (maxRetries = 10, delay = 500) => {
+                    let tries = 0;
+                    const attempt = () => {
+                        tries++;
+                        if (tryLoadFromInput()) return; // success
+                        if (tries < maxRetries) setTimeout(attempt, delay);
+                    };
+                    attempt();
+                };
+
                 // ── Draw (image-aware: handles letterbox & scale) ──
-                const drawShape = (cx, cy, br, lr, lg, lb, shape, iw, ih) => {
+                const drawShape = (cx, cy, br, lr, lg, lb, opacity, shape, iw, ih) => {
                     ctx.beginPath();
                     if (shape === "方形") {
                         ctx.rect(cx - br + 1, cy - br + 1, (br - 1) * 2, (br - 1) * 2);
@@ -166,9 +171,9 @@ app.registerExtension({
                     } else { // 圆形
                         ctx.arc(cx, cy, br - 1, 0, Math.PI * 2);
                     }
-                    ctx.fillStyle = `rgba(${lr},${lg},${lb},0.2)`;
+                    ctx.fillStyle = `rgba(${lr},${lg},${lb},${0.2 * opacity})`;
                     ctx.fill();
-                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.8)`;
+                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},${0.8 * opacity})`;
                     ctx.lineWidth = 2;
                     ctx.stroke();
                 };
@@ -216,6 +221,8 @@ app.registerExtension({
                     const bs = getW("ball_size")?.value ?? 0.15;
                     const lc = getW("light_color")?.value || "#FFFFFF";
                     const shape = getW("handle_shape")?.value || "圆形";
+                    const intensity = getW("intensity")?.value ?? 5.0;
+                    const opacity = Math.max(0.05, Math.min(1.0, intensity / 10.0));
 
                     const px = imgOffX + hx * imgDispW;
                     const py = imgOffY + hy * imgDispH;
@@ -226,9 +233,9 @@ app.registerExtension({
                     const lg = parseInt(hex.substring(2, 4), 16) || 255;
                     const lb = parseInt(hex.substring(4, 6), 16) || 255;
 
-                    // Glow
+                    // Glow (fades with intensity)
                     const grad = ctx.createRadialGradient(px, py, 0, px, py, br * 2.5);
-                    grad.addColorStop(0, `rgba(${lr},${lg},${lb},0.2)`);
+                    grad.addColorStop(0, `rgba(${lr},${lg},${lb},${0.2 * opacity})`);
                     grad.addColorStop(1, `rgba(${lr},${lg},${lb},0)`);
                     ctx.fillStyle = grad;
                     ctx.beginPath();
@@ -237,23 +244,17 @@ app.registerExtension({
 
                     ctx.beginPath();
                     ctx.arc(px, py, br * 1.8, 0, Math.PI * 2);
-                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.2)`;
+                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},${0.2 * opacity})`;
                     ctx.lineWidth = 1;
                     ctx.stroke();
 
-                    drawShape(px, py, br, lr, lg, lb, shape, imgDispW, imgDispH);
+                    // Shape (fill + outline, opacity controlled by intensity)
+                    drawShape(px, py, br, lr, lg, lb, opacity, shape, imgDispW, imgDispH);
 
-                    const ch2 = Math.max(8, br * 0.35);
-                    ctx.strokeStyle = "rgba(255,255,255,0.85)";
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.moveTo(px - ch2, py); ctx.lineTo(px + ch2, py);
-                    ctx.moveTo(px, py - ch2); ctx.lineTo(px, py + ch2);
-                    ctx.stroke();
-
+                    // Center dot only (no crosshair)
                     ctx.beginPath();
                     ctx.arc(px, py, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
+                    ctx.fillStyle = `rgba(${lr},${lg},${lb},${opacity})`;
                     ctx.fill();
 
                     updateSwatch();
@@ -300,18 +301,8 @@ app.registerExtension({
                     app.graph.setDirtyCanvas(true, true);
                 }, { passive: false });
 
-                canvas.addEventListener("touchstart", (e) => {
-                    e.preventDefault();
-                    dragging = true;
-                    const t = e.touches[0];
-                    setPos(posFromEvent(t.clientX, t.clientY));
-                }, { passive: false });
-                canvas.addEventListener("touchmove", (e) => {
-                    e.preventDefault();
-                    if (!dragging) return;
-                    const t = e.touches[0];
-                    setPos(posFromEvent(t.clientX, t.clientY));
-                }, { passive: false });
+                canvas.addEventListener("touchstart", (e) => { e.preventDefault(); dragging = true; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
+                canvas.addEventListener("touchmove", (e) => { e.preventDefault(); if (!dragging) return; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
                 canvas.addEventListener("touchend", (e) => { e.preventDefault(); dragging = false; }, { passive: false });
 
                 // ── DOM widget ──
@@ -327,7 +318,7 @@ app.registerExtension({
                     if (origOnConnectionsChange) origOnConnectionsChange.apply(this, arguments);
                     if (slotType === 1 && node.inputs[slot]?.name === "image") {
                         if (isConnected) {
-                            setTimeout(() => tryLoadFromInput(5), 100);
+                            setTimeout(() => retryLoad(8, 400), 100);
                         } else {
                             cachedImage = null;
                             imgNaturalW = 0;
@@ -341,7 +332,7 @@ app.registerExtension({
                 const origConfigure = this.configure;
                 this.configure = function (data) {
                     if (origConfigure) origConfigure.apply(this, arguments);
-                    setTimeout(() => tryLoadFromInput(6), 200);
+                    setTimeout(() => retryLoad(12, 400), 200);
                 };
 
                 // ── Receive executed image (fallback) ──
@@ -357,7 +348,7 @@ app.registerExtension({
                 const origOnWidgetChanged = this.onWidgetChanged;
                 this.onWidgetChanged = function (name, value, old_val, w) {
                     if (origOnWidgetChanged) origOnWidgetChanged.apply(this, arguments);
-                    if (["handle_x", "handle_y", "ball_size", "light_color", "handle_shape"].includes(name)) {
+                    if (["handle_x", "handle_y", "ball_size", "light_color", "handle_shape", "intensity"].includes(name)) {
                         draw();
                     }
                 };
@@ -366,10 +357,10 @@ app.registerExtension({
                 const resizeObserver = new ResizeObserver(() => draw());
                 resizeObserver.observe(canvas);
 
-                // ── Global graph change listener (catches reconnects, new loads) ──
+                // ── Global graph change listener ──
                 const afterGraphChange = () => {
-                    if (cachedImage) return; // already have one
-                    setTimeout(() => tryLoadFromInput(3), 100);
+                    if (cachedImage) return;
+                    setTimeout(() => retryLoad(5, 500), 100);
                 };
                 app.graph.onAfterChange = (() => {
                     const orig = app.graph.onAfterChange;
@@ -390,8 +381,8 @@ app.registerExtension({
 
                 this.setSize([350, 400]);
 
-                // Initial attempt
-                setTimeout(() => tryLoadFromInput(6), 300);
+                // Initial: retry up to 12 times × 400ms = ~5s
+                setTimeout(() => retryLoad(12, 400), 300);
                 setTimeout(draw, 100);
 
                 return r;
