@@ -13,25 +13,12 @@ app.registerExtension({
 
                 const getW = (name) => node.widgets?.find((w) => w.name === name);
 
-                // ── Hide the light_color text widget (merged into canvas color swatch) ──
+                // ── Hide light_color text widget (merged into canvas swatch) ──
                 const hideTextWidget = (name) => {
                     const w = node.widgets?.find(w => w.name === name);
                     if (!w) return;
                     w.computeSize = () => [0, -4];
-                    // Hide DOM elements after render
-                    const hideEl = () => {
-                        if (w.element) { w.element.style.display = "none"; return; }
-                        // Fallback: find by label
-                        const labels = node.el?.querySelectorAll(".comfy-modal, .widget-content, label");
-                        if (labels) {
-                            for (const lbl of labels) {
-                                if (lbl.textContent?.includes(name) || lbl.textContent?.includes("light_color")) {
-                                    lbl.style.display = "none";
-                                }
-                            }
-                        }
-                    };
-                    setTimeout(hideEl, 50);
+                    setTimeout(() => { if (w.element) w.element.style.display = "none"; }, 50);
                 };
                 hideTextWidget("light_color");
 
@@ -55,6 +42,8 @@ app.registerExtension({
                 const ctx = canvas.getContext("2d");
                 const dpr = window.devicePixelRatio || 1;
                 let cachedImage = null;
+                let imgNaturalW = 0;
+                let imgNaturalH = 0;
 
                 // ── Color bar ──
                 const colorBar = document.createElement("div");
@@ -95,10 +84,7 @@ app.registerExtension({
                     swatch.style.backgroundColor = val;
                     hexLabel.textContent = val;
                     const cw = getW("light_color");
-                    if (cw) {
-                        cw.value = val;
-                        draw();
-                    }
+                    if (cw) { cw.value = val; draw(); }
                     app.graph.setDirtyCanvas(true, true);
                 });
 
@@ -111,25 +97,25 @@ app.registerExtension({
                 container.appendChild(colorBar);
 
                 // ── Draw shape helper ──
-                const drawShape = (ctx, px, py, br, lr, lg, lb, shape, cw, ch) => {
+                const drawShape = (cx, cy, br, lr, lg, lb, shape, cw, ch) => {
                     ctx.beginPath();
                     if (shape === "方形") {
-                        ctx.rect(px - br + 1, py - br + 1, (br - 1) * 2, (br - 1) * 2);
+                        ctx.rect(cx - br + 1, cy - br + 1, (br - 1) * 2, (br - 1) * 2);
                     } else if (shape === "菱形") {
-                        ctx.moveTo(px, py - br + 1);
-                        ctx.lineTo(px + br - 1, py);
-                        ctx.lineTo(px, py + br - 1);
-                        ctx.lineTo(px - br + 1, py);
+                        ctx.moveTo(cx, cy - br + 1);
+                        ctx.lineTo(cx + br - 1, cy);
+                        ctx.lineTo(cx, cy + br - 1);
+                        ctx.lineTo(cx - br + 1, cy);
                         ctx.closePath();
                     } else if (shape === "三角形") {
-                        const angle = Math.atan2(py - ch / 2, px - cw / 2);
+                        const angle = Math.atan2(cy - ch / 2, cx - cw / 2);
                         const r2 = br - 2;
-                        ctx.moveTo(px + r2 * Math.cos(angle), py + r2 * Math.sin(angle));
-                        ctx.lineTo(px + r2 * 0.5 * Math.cos(angle + 2.094), py + r2 * 0.5 * Math.sin(angle + 2.094));
-                        ctx.lineTo(px + r2 * 0.5 * Math.cos(angle - 2.094), py + r2 * 0.5 * Math.sin(angle - 2.094));
+                        ctx.moveTo(cx + r2 * Math.cos(angle), cy + r2 * Math.sin(angle));
+                        ctx.lineTo(cx + r2 * 0.5 * Math.cos(angle + 2.094), cy + r2 * 0.5 * Math.sin(angle + 2.094));
+                        ctx.lineTo(cx + r2 * 0.5 * Math.cos(angle - 2.094), cy + r2 * 0.5 * Math.sin(angle - 2.094));
                         ctx.closePath();
                     } else { // 圆形
-                        ctx.arc(px, py, br - 1, 0, Math.PI * 2);
+                        ctx.arc(cx, cy, br - 1, 0, Math.PI * 2);
                     }
                     ctx.fillStyle = `rgba(${lr},${lg},${lb},0.2)`;
                     ctx.fill();
@@ -138,7 +124,7 @@ app.registerExtension({
                     ctx.stroke();
                 };
 
-                // ── Draw ──
+                // ── Draw (image-aware: accounts for letterbox and scale) ──
                 const draw = () => {
                     const rect = canvas.getBoundingClientRect();
                     const cw = rect.width;
@@ -149,18 +135,24 @@ app.registerExtension({
                     canvas.height = ch * dpr;
                     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-                    // Background
+                    // Fill background
                     ctx.fillStyle = "#0a0a0f";
                     ctx.fillRect(0, 0, cw, ch);
 
-                    if (cachedImage) {
-                        const scale = Math.min(cw / cachedImage.width, ch / cachedImage.height);
-                        const iw = cachedImage.width * scale;
-                        const ih = cachedImage.height * scale;
-                        const ix = (cw - iw) / 2;
-                        const iy = (ch - ih) / 2;
-                        ctx.drawImage(cachedImage, ix, iy, iw, ih);
+                    // Image rendering state (with letterbox)
+                    let imgOffX = 0, imgOffY = 0;
+                    let imgDispW = cw, imgDispH = ch;
+                    const hasImage = cachedImage && imgNaturalW > 0;
+
+                    if (hasImage) {
+                        const scale = Math.min(cw / imgNaturalW, ch / imgNaturalH);
+                        imgDispW = imgNaturalW * scale;
+                        imgDispH = imgNaturalH * scale;
+                        imgOffX = (cw - imgDispW) / 2;
+                        imgOffY = (ch - imgDispH) / 2;
+                        ctx.drawImage(cachedImage, imgOffX, imgOffY, imgDispW, imgDispH);
                     } else {
+                        // Grid placeholder
                         ctx.strokeStyle = "rgba(255,255,255,0.05)";
                         ctx.lineWidth = 1;
                         for (let x = 0; x < cw; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke(); }
@@ -179,9 +171,10 @@ app.registerExtension({
                     const lc = getW("light_color")?.value || "#FFFFFF";
                     const shape = getW("handle_shape")?.value || "圆形";
 
-                    const px = hx * cw;
-                    const py = hy * ch;
-                    const br = Math.max(6, bs * Math.max(cw, ch));
+                    // Position and radius relative to displayed image (matches Python)
+                    const px = imgOffX + hx * imgDispW;
+                    const py = imgOffY + hy * imgDispH;
+                    const br = Math.max(6, bs * Math.max(imgDispW, imgDispH));
 
                     // Parse color
                     const hex = lc.replace("#", "");
@@ -205,8 +198,8 @@ app.registerExtension({
                     ctx.lineWidth = 1;
                     ctx.stroke();
 
-                    // Shape (fill + outline)
-                    drawShape(ctx, px, py, br, lr, lg, lb, shape, cw, ch);
+                    // Shape
+                    drawShape(px, py, br, lr, lg, lb, shape, imgDispW, imgDispH);
 
                     // Crosshair
                     const ch2 = Math.max(8, br * 0.35);
@@ -226,20 +219,86 @@ app.registerExtension({
                     updateSwatch();
                 };
 
-                // ── Image loader ──
-                const loadImage = (dataUrl) => {
+                // ── Load image (from URL or data-URI) ──
+                const loadImage = (url) => {
                     const img = new Image();
-                    img.onload = () => { cachedImage = img; draw(); };
-                    img.onerror = () => { cachedImage = null; draw(); };
-                    img.src = dataUrl;
+                    img.onload = () => {
+                        cachedImage = img;
+                        imgNaturalW = img.naturalWidth || img.width;
+                        imgNaturalH = img.naturalHeight || img.height;
+                        draw();
+                    };
+                    img.onerror = () => { cachedImage = null; imgNaturalW = 0; imgNaturalH = 0; draw(); };
+                    img.src = url;
                 };
 
-                // ── Mouse interaction ──
+                // ── Try to load image from connected input node ──
+                const tryLoadFromInput = () => {
+                    const imgInput = node.inputs?.find(inp => inp.name === "image");
+                    if (!imgInput || imgInput.link == null) return;
+
+                    const link = app.graph.links[imgInput.link];
+                    if (!link) return;
+
+                    const srcNode = app.graph.getNodeById(link[0]);
+                    if (!srcNode) return;
+
+                    // LoadImage node → stream directly from ComfyUI server
+                    if (srcNode.type === "LoadImage" || srcNode.type === "Zoey True Size Image Loader" || srcNode.computeSize) {
+                        const imgWidget = srcNode.widgets?.find(w => w.name === "image");
+                        if (imgWidget && imgWidget.value) {
+                            const parts = imgWidget.value.split("/");
+                            const fn = parts.pop();
+                            const sub = parts.join("/");
+                            loadImage(`/view?filename=${encodeURIComponent(fn)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`);
+                            return;
+                        }
+                    }
+
+                    // Generic fallback: check if node has an image output with cached data
+                    if (srcNode.imgs && srcNode.imgs.length > 0) {
+                        loadImage(srcNode.imgs[0].src);
+                    }
+                };
+
+                // ── Handle connection changes ──
+                const origOnConnectionsChange = nodeType.prototype.onConnectionsChange;
+                nodeType.prototype.onConnectionsChange = function (slotType, slot, isConnected, link, outputSlot) {
+                    if (origOnConnectionsChange) origOnConnectionsChange.apply(this, arguments);
+                    if (slotType === 1 && node.inputs[slot]?.name === "image") {
+                        if (isConnected) {
+                            setTimeout(tryLoadFromInput, 50);
+                        } else {
+                            cachedImage = null;
+                            imgNaturalW = 0;
+                            imgNaturalH = 0;
+                            draw();
+                        }
+                    }
+                };
+
+                // ── Interaction: map canvas coords → image-normalized coords ──
                 const posFromEvent = (clientX, clientY) => {
                     const rect = canvas.getBoundingClientRect();
+                    const cw = rect.width;
+                    const ch = rect.height;
+
+                    // Image display rect
+                    let imgOffX = 0, imgOffY = 0;
+                    let imgDispW = cw, imgDispH = ch;
+                    if (imgNaturalW > 0 && imgNaturalH > 0) {
+                        const scale = Math.min(cw / imgNaturalW, ch / imgNaturalH);
+                        imgDispW = imgNaturalW * scale;
+                        imgDispH = imgNaturalH * scale;
+                        imgOffX = (cw - imgDispW) / 2;
+                        imgOffY = (ch - imgDispH) / 2;
+                    }
+
+                    const relX = (clientX - rect.left - imgOffX) / imgDispW;
+                    const relY = (clientY - rect.top - imgOffY) / imgDispH;
                     return {
-                        x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
-                        y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+                        x: Math.max(0, Math.min(1, relX)),
+                        y: Math.max(0, Math.min(1, relY)),
                     };
                 };
 
@@ -254,16 +313,8 @@ app.registerExtension({
 
                 let dragging = false;
 
-                canvas.addEventListener("mousedown", (e) => {
-                    dragging = true;
-                    setPos(posFromEvent(e.clientX, e.clientY));
-                });
-
-                canvas.addEventListener("mousemove", (e) => {
-                    if (!dragging) return;
-                    setPos(posFromEvent(e.clientX, e.clientY));
-                });
-
+                canvas.addEventListener("mousedown", (e) => { dragging = true; setPos(posFromEvent(e.clientX, e.clientY)); });
+                canvas.addEventListener("mousemove", (e) => { if (!dragging) return; setPos(posFromEvent(e.clientX, e.clientY)); });
                 const onMouseUp = () => { dragging = false; };
                 window.addEventListener("mouseup", onMouseUp);
 
@@ -272,43 +323,26 @@ app.registerExtension({
                     e.preventDefault();
                     const bs = getW("ball_size");
                     if (!bs) return;
-                    const delta = e.deltaY > 0 ? -0.01 : 0.01;
-                    bs.value = Math.max(0.02, Math.min(0.5, bs.value + delta));
+                    bs.value = Math.max(0.02, Math.min(0.5, bs.value + (e.deltaY > 0 ? -0.01 : 0.01)));
                     draw();
                     app.graph.setDirtyCanvas(true, true);
                 }, { passive: false });
 
                 // ── Touch ──
-                canvas.addEventListener("touchstart", (e) => {
-                    e.preventDefault();
-                    dragging = true;
-                    const t = e.touches[0];
-                    setPos(posFromEvent(t.clientX, t.clientY));
-                }, { passive: false });
-
-                canvas.addEventListener("touchmove", (e) => {
-                    e.preventDefault();
-                    if (!dragging) return;
-                    const t = e.touches[0];
-                    setPos(posFromEvent(t.clientX, t.clientY));
-                }, { passive: false });
-
-                canvas.addEventListener("touchend", (e) => {
-                    e.preventDefault();
-                    dragging = false;
-                }, { passive: false });
+                canvas.addEventListener("touchstart", (e) => { e.preventDefault(); dragging = true; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
+                canvas.addEventListener("touchmove", (e) => { e.preventDefault(); if (!dragging) return; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
+                canvas.addEventListener("touchend", (e) => { e.preventDefault(); dragging = false; }, { passive: false });
 
                 // ── DOM widget ──
                 const widget = this.addDOMWidget("light_handle_viewer", "LIGHT_HANDLE", container, {
                     getValue() { return ""; },
                     setValue() {},
                 });
-
                 widget.computeSize = function (width) {
                     return [Math.max(width || 350, 350), 320];
                 };
 
-                // ── Receive executed image ──
+                // ── Receive executed image (fallback, or on re-execute) ──
                 const onExecuted = this.onExecuted;
                 this.onExecuted = function (message) {
                     if (onExecuted) onExecuted.apply(this, arguments);
@@ -341,7 +375,11 @@ app.registerExtension({
 
                 this.setSize([350, 400]);
 
-                setTimeout(draw, 100);
+                // Initial: try to load from connected input
+                setTimeout(() => {
+                    tryLoadFromInput();
+                    draw();
+                }, 150);
 
                 return r;
             };
