@@ -5,6 +5,7 @@ Interactive lighting direction control with circular mask generation.
 - Generates circular gradient mask at handle position
 - Generates lighting direction prompt from handle position
 - Optional behind-subject compositing with subject mask
+- IMAGE output with handle overlay drawn using light color
 """
 
 import torch
@@ -12,7 +13,6 @@ import numpy as np
 from PIL import Image, ImageDraw
 import base64
 import io
-import math
 
 
 class ZoeyLightHandle:
@@ -41,20 +41,18 @@ class ZoeyLightHandle:
             }
         }
 
-    RETURN_TYPES = ("MASK", "STRING")
-    RETURN_NAMES = ("light_mask", "light_prompt")
+    RETURN_TYPES = ("MASK", "STRING", "IMAGE")
+    RETURN_NAMES = ("light_mask", "light_prompt", "preview_image")
     FUNCTION = "generate"
     CATEGORY = "Zoey工具集/图像编辑"
     OUTPUT_NODE = True
 
     def _build_prompt(self, handle_x, handle_y, intensity, color_hex):
         """Generate lighting direction prompt from 2D handle position."""
-        # Map handle position to azimuth (0-360) and elevation (-90 to 90)
         azimuth = (handle_x * 360) % 360
         elevation = 90 - handle_y * 180
         elevation = max(-90, min(90, elevation))
 
-        # Azimuth (horizontal) description
         if (azimuth >= 337.5) or (azimuth < 22.5):
             pos_desc = "light source in front"
         elif 22.5 <= azimuth < 67.5:
@@ -72,7 +70,6 @@ class ZoeyLightHandle:
         else:
             pos_desc = "light source from the front-left"
 
-        # Elevation (vertical) description
         e = elevation
         if -90 <= e < -30:
             elev_desc = "uplighting, light source positioned below, light shining upwards"
@@ -85,7 +82,6 @@ class ZoeyLightHandle:
         else:
             elev_desc = "overhead top-down light source"
 
-        # Intensity
         if intensity < 3.0:
             int_desc = "soft"
         elif intensity < 7.0:
@@ -105,22 +101,50 @@ class ZoeyLightHandle:
         )
         dist = torch.sqrt((x_coords - cx) ** 2 + (y_coords - cy) ** 2)
         t = torch.clamp(dist / radius, 0, 1)
-        # Smoothstep: 1.0 at center, 0.0 at radius
         mask = 1.0 - t
-        # Smooth falloff: 3t^2 - 2t^3 applied to (1-t)
-        mask = mask * mask * (3 - 2 * mask)
+        mask = mask * mask * (3 - 2 * mask)  # smoothstep
         return mask
+
+    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color):
+        """Draw handle circle on image using light color, return IMAGE tensor."""
+        img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
+        pil_img = Image.fromarray(img_np).convert('RGBA')
+
+        # Parse hex
+        h = light_color.lstrip('#')
+        cr = int(h[0:2], 16) if len(h) >= 2 else 255
+        cg = int(h[2:4], 16) if len(h) >= 4 else 255
+        cb = int(h[4:6], 16) if len(h) >= 6 else 255
+
+        overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        r = max(6, int(radius))
+
+        # Semi-transparent filled circle
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(cr, cg, cb, 60))
+        # Color ring
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(cr, cg, cb, 255), width=2)
+        # Outer glow ring (lighter)
+        draw.ellipse([cx - r*2, cy - r*2, cx + r*2, cy + r*2], outline=(cr, cg, cb, 60), width=1)
+        # Crosshair
+        ch = max(8, int(r * 0.3))
+        draw.line([cx - ch, cy, cx + ch, cy], fill=(255, 255, 255, 200), width=1)
+        draw.line([cx, cy - ch, cx, cy + ch], fill=(255, 255, 255, 200), width=1)
+        # Center dot
+        draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(cr, cg, cb, 255))
+
+        result = Image.alpha_composite(pil_img, overlay).convert('RGB')
+        return torch.from_numpy(np.array(result).astype(np.float32) / 255.0).unsqueeze(0)
 
     def generate(self, image, handle_x, handle_y, ball_size, light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False):
         batch_size, height, width, channels = image.shape
         img = image[0]
 
-        # Handle position in pixel coords
         cx = handle_x * width
         cy = handle_y * height
         radius = max(2.0, ball_size * max(width, height))
 
-        # Generate circular gradient mask
+        # Circular gradient mask
         light_mask = self._generate_circular_mask(height, width, cx, cy, radius)
 
         # Behind-subject compositing
@@ -135,42 +159,28 @@ class ZoeyLightHandle:
                 sub_pil = Image.fromarray(sub_np).resize((width, height), Image.BILINEAR)
                 sub_mask = torch.from_numpy(np.array(sub_pil).astype(np.float32)) / 255.0
 
-            # Light falls behind subject: mask is occluded where subject blocks
             light_mask = light_mask * (1.0 - sub_mask)
 
         light_mask = light_mask.unsqueeze(0).to(torch.float32)
 
-        # Generate prompt
+        # Lighting prompt
         prompt = self._build_prompt(handle_x, handle_y, intensity, light_color)
 
-        # Preview: draw handle indicator on image for frontend
+        # Annotated image output
+        annotated = self._draw_handle_overlay(img, width, height, cx, cy, radius, light_color)
+
+        # Frontend preview: send ORIGINAL image (JS draws interactive handle)
         image_base64 = ""
         try:
             img_np = (255. * img.cpu().numpy()).clip(0, 255).astype(np.uint8)
-            pil_image = Image.fromarray(img_np)
-
-            draw = ImageDraw.Draw(pil_image)
-            r = max(6, int(radius))
-            # Outer glow ring
-            draw.ellipse([cx - r*2, cy - r*2, cx + r*2, cy + r*2],
-                         outline="rgba(255,215,0,100)", width=1)
-            # Handle circle
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                         outline="#FFD700", width=2)
-            # Crosshair
-            ch = max(8, int(r * 0.3))
-            draw.line([cx - ch, cy, cx + ch, cy], fill="white", width=1)
-            draw.line([cx, cy - ch, cx, cy + ch], fill="white", width=1)
-            # Center dot
-            draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill="#FFD700")
-
+            pil_original = Image.fromarray(img_np)
             buf = io.BytesIO()
-            pil_image.save(buf, format="PNG")
+            pil_original.save(buf, format="PNG")
             image_base64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
         except Exception:
             pass
 
-        return {"ui": {"image_base64": [image_base64]}, "result": (light_mask, prompt)}
+        return {"ui": {"image_base64": [image_base64]}, "result": (light_mask, prompt, annotated)}
 
 
 NODE_CLASS_MAPPINGS = {

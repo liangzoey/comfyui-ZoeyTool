@@ -11,10 +11,19 @@ app.registerExtension({
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const node = this;
 
-                // ── Canvas setup ──
+                const getW = (name) => node.widgets?.find((w) => w.name === name);
+
+                // ── Container ──
+                const container = document.createElement("div");
+                container.style.display = "flex";
+                container.style.flexDirection = "column";
+                container.style.width = "100%";
+                container.style.gap = "4px";
+
+                // ── Canvas ──
                 const canvas = document.createElement("canvas");
                 canvas.style.width = "100%";
-                canvas.style.height = "320px";
+                canvas.style.height = "280px";
                 canvas.style.border = "1px solid rgba(255,255,255,0.1)";
                 canvas.style.borderRadius = "8px";
                 canvas.style.backgroundColor = "#0a0a0f";
@@ -23,11 +32,61 @@ app.registerExtension({
 
                 const ctx = canvas.getContext("2d");
                 const dpr = window.devicePixelRatio || 1;
-
                 let cachedImage = null;
-                let imageDataUrl = null;
 
-                const getW = (name) => node.widgets?.find((w) => w.name === name);
+                // ── Color bar ──
+                const colorBar = document.createElement("div");
+                colorBar.style.display = "flex";
+                colorBar.style.alignItems = "center";
+                colorBar.style.gap = "6px";
+                colorBar.style.padding = "2px 4px";
+                colorBar.style.cursor = "pointer";
+                colorBar.style.borderRadius = "4px";
+                colorBar.style.border = "1px solid rgba(255,255,255,0.1)";
+                colorBar.style.backgroundColor = "rgba(10,10,15,0.6)";
+
+                const swatch = document.createElement("div");
+                swatch.style.width = "20px";
+                swatch.style.height = "20px";
+                swatch.style.borderRadius = "3px";
+                swatch.style.border = "1px solid rgba(255,255,255,0.2)";
+                swatch.style.flexShrink = "0";
+
+                const hexLabel = document.createElement("span");
+                hexLabel.style.fontSize = "11px";
+                hexLabel.style.color = "rgba(255,255,255,0.6)";
+                hexLabel.style.fontFamily = "monospace";
+
+                const colorInput = document.createElement("input");
+                colorInput.type = "color";
+                colorInput.style.display = "none";
+
+                const updateSwatch = () => {
+                    const cw = getW("light_color");
+                    const val = cw?.value || "#FFFFFF";
+                    swatch.style.backgroundColor = val;
+                    hexLabel.textContent = val.toUpperCase();
+                };
+
+                colorInput.addEventListener("input", () => {
+                    const val = colorInput.value.toUpperCase();
+                    swatch.style.backgroundColor = val;
+                    hexLabel.textContent = val;
+                    const cw = getW("light_color");
+                    if (cw) {
+                        cw.value = val;
+                        draw();
+                    }
+                    app.graph.setDirtyCanvas(true, true);
+                });
+
+                colorBar.addEventListener("click", () => colorInput.click());
+                colorBar.appendChild(swatch);
+                colorBar.appendChild(hexLabel);
+                colorBar.appendChild(colorInput);
+
+                container.appendChild(canvas);
+                container.appendChild(colorBar);
 
                 // ── Draw ──
                 const draw = () => {
@@ -52,7 +111,6 @@ app.registerExtension({
                         const iy = (h - ih) / 2;
                         ctx.drawImage(cachedImage, ix, iy, iw, ih);
                     } else {
-                        // Grid placeholder
                         ctx.strokeStyle = "rgba(255,255,255,0.05)";
                         ctx.lineWidth = 1;
                         for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
@@ -68,31 +126,45 @@ app.registerExtension({
                     const hx = getW("handle_x")?.value ?? 0.5;
                     const hy = getW("handle_y")?.value ?? 0.5;
                     const bs = getW("ball_size")?.value ?? 0.15;
+                    const lc = getW("light_color")?.value || "#FFFFFF";
 
                     const px = hx * w;
                     const py = hy * h;
                     const br = Math.max(6, bs * Math.max(w, h));
 
+                    // Parse color
+                    const hex = lc.replace("#", "");
+                    const lr = parseInt(hex.substring(0, 2), 16) || 255;
+                    const lg = parseInt(hex.substring(2, 4), 16) || 255;
+                    const lb = parseInt(hex.substring(4, 6), 16) || 255;
+
                     // Glow
                     const grad = ctx.createRadialGradient(px, py, 0, px, py, br * 2.5);
-                    grad.addColorStop(0, "rgba(255, 215, 0, 0.2)");
-                    grad.addColorStop(1, "rgba(255, 215, 0, 0)");
+                    grad.addColorStop(0, `rgba(${lr},${lg},${lb},0.2)`);
+                    grad.addColorStop(1, `rgba(${lr},${lg},${lb},0)`);
                     ctx.fillStyle = grad;
                     ctx.beginPath();
                     ctx.arc(px, py, br * 2.5, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Outer ring
+                    // Outer glow ring
+                    ctx.beginPath();
+                    ctx.arc(px, py, br * 1.8, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.2)`;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // Ball ring
                     ctx.beginPath();
                     ctx.arc(px, py, br, 0, Math.PI * 2);
-                    ctx.strokeStyle = "rgba(255, 215, 0, 0.7)";
+                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.8)`;
                     ctx.lineWidth = 2;
                     ctx.stroke();
 
-                    // Inner fill
+                    // Ball fill
                     ctx.beginPath();
                     ctx.arc(px, py, br - 2, 0, Math.PI * 2);
-                    ctx.fillStyle = "rgba(255, 215, 0, 0.15)";
+                    ctx.fillStyle = `rgba(${lr},${lg},${lb},0.2)`;
                     ctx.fill();
 
                     // Crosshair
@@ -107,20 +179,21 @@ app.registerExtension({
                     // Center dot
                     ctx.beginPath();
                     ctx.arc(px, py, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = "#FFD700";
+                    ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
                     ctx.fill();
+
+                    updateSwatch();
                 };
 
                 // ── Image loader ──
                 const loadImage = (dataUrl) => {
-                    imageDataUrl = dataUrl;
                     const img = new Image();
                     img.onload = () => { cachedImage = img; draw(); };
                     img.onerror = () => { cachedImage = null; draw(); };
                     img.src = dataUrl;
                 };
 
-                // ── Interaction ──
+                // ── Mouse interaction ──
                 const posFromEvent = (clientX, clientY) => {
                     const rect = canvas.getBoundingClientRect();
                     return {
@@ -153,7 +226,18 @@ app.registerExtension({
                 const onMouseUp = () => { dragging = false; };
                 window.addEventListener("mouseup", onMouseUp);
 
-                // Touch
+                // ── Scroll wheel → ball_size ──
+                canvas.addEventListener("wheel", (e) => {
+                    e.preventDefault();
+                    const bs = getW("ball_size");
+                    if (!bs) return;
+                    const delta = e.deltaY > 0 ? -0.01 : 0.01;
+                    bs.value = Math.max(0.02, Math.min(0.5, bs.value + delta));
+                    draw();
+                    app.graph.setDirtyCanvas(true, true);
+                }, { passive: false });
+
+                // ── Touch ──
                 canvas.addEventListener("touchstart", (e) => {
                     e.preventDefault();
                     dragging = true;
@@ -174,13 +258,13 @@ app.registerExtension({
                 }, { passive: false });
 
                 // ── DOM widget ──
-                const widget = this.addDOMWidget("light_handle_viewer", "LIGHT_HANDLE", canvas, {
+                const widget = this.addDOMWidget("light_handle_viewer", "LIGHT_HANDLE", container, {
                     getValue() { return ""; },
                     setValue() {},
                 });
 
                 widget.computeSize = function (width) {
-                    return [Math.max(width || 350, 350), 360];
+                    return [Math.max(width || 350, 350), 320];
                 };
 
                 // ── Receive executed image ──
@@ -196,7 +280,7 @@ app.registerExtension({
                 const origOnWidgetChanged = this.onWidgetChanged;
                 this.onWidgetChanged = function (name, value, old_val, w) {
                     if (origOnWidgetChanged) origOnWidgetChanged.apply(this, arguments);
-                    if (["handle_x", "handle_y", "ball_size"].includes(name)) {
+                    if (["handle_x", "handle_y", "ball_size", "light_color"].includes(name)) {
                         draw();
                     }
                 };
@@ -214,9 +298,8 @@ app.registerExtension({
                     if (origOnRemoved) origOnRemoved.apply(this, arguments);
                 };
 
-                this.setSize([350, 430]);
+                this.setSize([350, 400]);
 
-                // Initial draw after DOM settles
                 setTimeout(draw, 100);
 
                 return r;
