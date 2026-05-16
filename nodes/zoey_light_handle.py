@@ -4,8 +4,9 @@ Interactive lighting direction control with circular mask generation.
 - Draggable handle sets light position
 - Generates circular gradient mask at handle position
 - Generates lighting direction prompt from handle position
-- Optional behind-subject compositing with subject mask
+- Optional behind-subject compositing with subject mask (alpha composite)
 - IMAGE output with handle overlay drawn using light color
+- Multiple handle shapes: circle, square, diamond, triangle
 """
 
 import torch
@@ -13,6 +14,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import base64
 import io
+import math
 
 
 class ZoeyLightHandle:
@@ -30,6 +32,7 @@ class ZoeyLightHandle:
                 "ball_size": ("FLOAT", {
                     "default": 0.15, "min": 0.02, "max": 0.5, "step": 0.01, "display": "slider"
                 }),
+                "handle_shape": (["圆形", "方形", "菱形", "三角形"], {"default": "圆形"}),
                 "light_color": ("STRING", {"default": "#FFFFFF"}),
                 "intensity": ("FLOAT", {
                     "default": 5.0, "min": 0.0, "max": 10.0, "step": 0.1, "display": "slider"
@@ -48,13 +51,11 @@ class ZoeyLightHandle:
     OUTPUT_NODE = True
 
     def _build_prompt(self, behind_subject):
-        """Generate lighting prompt referencing the visual color block in preview_image."""
         if behind_subject:
             return "根据图中色块方向和颜色打光，并移除色块，光源在主体后方"
         return "根据图中色块方向和颜色打光，并移除色块"
 
     def _generate_circular_mask(self, h, w, cx, cy, radius):
-        """Generate a smooth circular gradient mask centered at (cx, cy)."""
         y_coords, x_coords = torch.meshgrid(
             torch.arange(h, dtype=torch.float32),
             torch.arange(w, dtype=torch.float32),
@@ -63,20 +64,32 @@ class ZoeyLightHandle:
         dist = torch.sqrt((x_coords - cx) ** 2 + (y_coords - cy) ** 2)
         t = torch.clamp(dist / radius, 0, 1)
         mask = 1.0 - t
-        mask = mask * mask * (3 - 2 * mask)  # smoothstep
+        mask = mask * mask * (3 - 2 * mask)
         return mask
 
-    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, behind_subject=False, subject_mask=None):
-        """Draw handle circle on image using light color, return IMAGE tensor.
+    def _draw_shape_on_canvas(self, draw, cx, cy, r, cr, cg, cb, shape, img_cx, img_cy):
+        """Draw shape + fill + crosshair + center dot."""
+        fill = (cr, cg, cb, 60)
+        outline = (cr, cg, cb, 255)
 
-        When behind_subject is True, composites the subject (from subject_mask)
-        on top of the handle, so the color block appears behind the subject.
-        This uses the same alpha compositing approach as mask_draw_rectangle.
-        """
+        if shape == "方形":
+            draw.rectangle([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=2)
+        elif shape == "菱形":
+            pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
+            draw.polygon(pts, fill=fill, outline=outline)
+        elif shape == "三角形":
+            angle = math.atan2(cy - img_cy, cx - img_cx)
+            tip = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+            b1 = (cx + r * 0.5 * math.cos(angle + 2.094), cy + r * 0.5 * math.sin(angle + 2.094))
+            b2 = (cx + r * 0.5 * math.cos(angle - 2.094), cy + r * 0.5 * math.sin(angle - 2.094))
+            draw.polygon([tip, b1, b2], fill=fill, outline=outline)
+        else:  # 圆形
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=2)
+
+    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, handle_shape="圆形", behind_subject=False, subject_mask=None):
         img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np).convert('RGBA')
 
-        # Parse hex
         h = light_color.lstrip('#')
         cr = int(h[0:2], 16) if len(h) >= 2 else 255
         cg = int(h[2:4], 16) if len(h) >= 4 else 255
@@ -86,12 +99,12 @@ class ZoeyLightHandle:
         draw = ImageDraw.Draw(overlay)
         r = max(6, int(radius))
 
-        # Semi-transparent filled circle
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(cr, cg, cb, 60))
-        # Color ring
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(cr, cg, cb, 255), width=2)
-        # Outer glow ring (lighter)
+        # Outer glow ring
         draw.ellipse([cx - r*2, cy - r*2, cx + r*2, cy + r*2], outline=(cr, cg, cb, 60), width=1)
+
+        # Draw the selected shape
+        self._draw_shape_on_canvas(draw, cx, cy, r, cr, cg, cb, handle_shape, width/2, height/2)
+
         # Crosshair
         ch = max(8, int(r * 0.3))
         draw.line([cx - ch, cy, cx + ch, cy], fill=(255, 255, 255, 200), width=1)
@@ -104,7 +117,6 @@ class ZoeyLightHandle:
 
         # Place subject on top so handle appears behind the subject
         if behind_subject and subject_mask is not None:
-            # Get subject mask as PIL image
             if subject_mask.dim() == 3:
                 sub_mask = subject_mask[0]
             else:
@@ -124,7 +136,7 @@ class ZoeyLightHandle:
 
         return torch.from_numpy(np.array(result.convert('RGB')).astype(np.float32) / 255.0).unsqueeze(0)
 
-    def generate(self, image, handle_x, handle_y, ball_size, light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False):
+    def generate(self, image, handle_x, handle_y, ball_size, handle_shape="圆形", light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False):
         batch_size, height, width, channels = image.shape
         img = image[0]
 
@@ -135,7 +147,7 @@ class ZoeyLightHandle:
         # Circular gradient mask
         light_mask = self._generate_circular_mask(height, width, cx, cy, radius)
 
-        # Behind-subject compositing
+        # Behind-subject compositing for mask
         if behind_subject and subject_mask is not None:
             if subject_mask.dim() == 3:
                 sub_mask = subject_mask[0]
@@ -154,10 +166,13 @@ class ZoeyLightHandle:
         # Lighting prompt
         prompt = self._build_prompt(behind_subject)
 
-        # Annotated image output (with behind-subject compositing)
-        annotated = self._draw_handle_overlay(img, width, height, cx, cy, radius, light_color, behind_subject, subject_mask)
+        # Annotated image output
+        annotated = self._draw_handle_overlay(
+            img, width, height, cx, cy, radius, light_color,
+            handle_shape, behind_subject, subject_mask
+        )
 
-        # Frontend preview: send ORIGINAL image (JS draws interactive handle)
+        # Frontend preview: ORIGINAL image (JS draws interactive handle)
         image_base64 = ""
         try:
             img_np = (255. * img.cpu().numpy()).clip(0, 255).astype(np.uint8)
