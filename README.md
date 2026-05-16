@@ -1,12 +1,16 @@
-# Zoey Tool - ComfyUI Custom Nodes
+# Zoey Tool
 
-A multi-functional ComfyUI plugin providing image/video processing, translation, prompt generation, and other utility nodes.
-
-ComfyUI 多功能工具插件，提供图像/视频处理、翻译、提示词生成等实用节点。
+[**English**](#english) | [**中文**](#chinese)
 
 ---
 
-## Installation / 安装
+<a name="english"></a>
+
+## English
+
+Multi-functional ComfyUI custom nodes plugin for image/video processing, translation, prompt generation, and more.
+
+### Installation
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -15,76 +19,135 @@ cd comfyui-ZoeyTool
 pip install -r requirements.txt
 ```
 
----
+### Nodes
 
-## Nodes / 节点列表
+#### 🖼️ Image Processing
 
-### 🖼️ Image Processing / 图像处理
+| Node | Description |
+|------|-------------|
+| **True Size Image Loader** | Load images from folder at original resolution, sequential batch output, natural sorting, alpha channel as mask output |
+| **Batch Image Saver** | Save images + text files in batch with custom index, digit count, overwrite mode |
+| **Mask Bounding Box Drawer** | Draw bounding boxes from mask with HTML5 color picker, opacity/fill/width controls, optional rembg background removal |
+| **Batch Image Cropper** | Batch crop images (left/right/top/bottom), overwrite mode, filename preservation |
+| **Multi-function Image Editor** | Flip, rotate, split, edge detect, blur, sharpen, threshold, color invert, grayscale, perspective warp, blend, stylize |
+| **Image Edit Prompt Generator** | Auto-generate edit prompts for text/object/style/background editing, virtual try-on, object add/remove |
 
-| Node | 节点 | Description |
-|------|------|-------------|
-| **Zoey - True Size Image Loader** | 真尺寸图像加载器 | Load images from folder at original resolution, batch sequential output, natural sorting, alpha channel as mask |
-| **Zoey - Batch Image Saver** | 智能图像存储器 | Save images + text files in batch with custom index, digits, overwrite mode, batch name prefix |
-| **Zoey - Mask Bounding Box Drawer** | 遮罩边界框绘制 | Draw bounding boxes from mask with HTML5 color picker, opacity/fill/width controls, optional rembg background removal |
-| **Zoey - Batch Image Cropper** | 图像批量裁剪器 | Batch crop images (left/right/top/bottom), overwrite mode, filename preservation |
-| **Zoey - Multi-function Image Editor** | 多功能图像编辑器 | Flip, rotate, split, edge detect, blur, sharpen, threshold, invert, grayscale, perspective warp, blend, stylize |
-| **Zoey - Image Edit Prompt Generator** | 图像编辑提示词生成器 | Auto-generate edit prompts for text/object/style/background replacement, virtual try-on, object add/remove |
+#### 🎥 Video Processing
 
-### 🎥 Video Processing / 视频处理
+| Node | Description |
+|------|-------------|
+| **Batch Video Loader** | Load video file list from directory, multi-format (mp4/avi/mov), natural sort, limit control |
+| **Video Batch Processor** | Batch process videos (format, frame rate), auto-install dependencies, skip existing |
+| **Smart Video Saver** | Save processed videos with date folders and metadata |
 
-| Node | 节点 | Description |
-|------|------|-------------|
-| **Zoey - Batch Video Loader** | 批量视频加载器 | Load video file list from directory, multi-format support (mp4/avi/mov), natural sort, limit |
-| **Zoey - Video Batch Processor** | 视频批处理器 | Batch process videos (format conversion, frame rate), auto-install deps, skip existing |
-| **Zoey - Smart Video Saver** | 智能视频存储器 | Save processed videos with date folder, metadata writing |
+#### 📝 Text Tools
 
-### 📝 Text Tools / 文本工具
+| Node | Description |
+|------|-------------|
+| **Pure Translator** | Multi-engine translation: Helsinki-NLP models / Baidu API / Google API. Supports ZH/EN/JA/KO |
+| **Hunyuan Translator (HY-MT1.5)** | Tencent Hunyuan MT local deployment, 20+ languages, auto-download model cache, terminology & context support |
+| **Wan2.2 Prompt Generator** | Cinematic video prompt generator with 16 control dimensions: subject, scene, action, lighting, composition, lens, style |
 
-| Node | 节点 | Description |
-|------|------|-------------|
-| **Zoey - Pure Translator** | 纯净翻译器 | Multi-engine translation: Helsinki-NLP models / Baidu API / Google API (free). Supports ZH/EN/JA/KO |
-| **Zoey - Hunyuan Translator (HY-MT1.5)** | 混元翻译器 | Tencent Hunyuan MT model local deployment, 20+ languages, auto-download, terminology & context support |
-| **Zoey - Wan2.2 Prompt Generator** | Wan2.2提示词生成器 | Cinematic video prompt generator with 16 dimensions: subject, scene, action, lighting, composition, lens, style |
+#### 🔧 Other
 
-### 🔧 Other / 其他
+| Node | Description |
+|------|-------------|
+| **Multi File Batch Renamer** | Batch rename files with regex find/replace, natural sort, custom start index |
+| **ZOEYTextEncodeQwenImageEditPlus** | Qwen image edit encoder with multi-reference images for Qwen2-VL |
+| **VR 360° Preview** | 360° equirectangular panorama VR viewer powered by Pannellum |
 
-| Node | 节点 | Description |
-|------|------|-------------|
-| **Zoey - Multi File Batch Renamer** | 多文件批量重命名 | Batch rename files with regex find/replace, natural sort, custom start index and digit count |
-| **ZOEYTextEncodeQwenImageEditPlus** | Qwen 图像编辑编码器 | Qwen image edit encoder with multi-reference image support for Qwen2-VL |
-| **Zoey VR 360° Preview** | VR 360° 嵌入式预览 | 360° equirectangular panorama VR preview powered by Pannellum, fullscreen interactive viewer |
+### Highlights
 
----
+- **Mask Bounding Box Drawer**: HTML5 color picker, opacity/fill/width controls, optional rembg background removal
+- **Translation**: Pure Translator (Helsinki-NLP / Baidu / Google) + Hunyuan Translator (20+ languages, auto model cache)
+- **Video Pipeline**: Batch load → process → save complete workflow
+- **Image Editor**: 15+ operations including flip, rotate, blur, edge detect, sharpen, blend, stylize
 
-## Highlights / 功能亮点
-
-### 🎨 Mask Bounding Box Drawer / 遮罩边界框绘制
-- HTML5 color picker popup for color selection / 弹出式调色板自由选色
-- Opacity / Fill (solid/hollow) / Line width controls / 透明度、填充、线宽调节
-- Optional rembg background removal (auto-downloads RMBG-1.4 model) / 可选 rembg 背景移除
-- Margin percentage for box expansion / 边距百分比控制扩展范围
-
-### 🌐 Translation / 翻译
-- **Pure Translator**: Lightweight, supports Helsinki-NLP / Baidu API / Google API / 轻量级多引擎翻译
-- **Hunyuan Translator**: Full Hunyuan HY-MT1.5 with 20+ languages, auto model caching, terminology & context / 全量语言支持，自动下载缓存
-
-### 📹 Video Pipeline / 视频处理流水线
-Batch Load → Batch Process → Smart Save, complete video batch workflow / 批量加载→处理→保存，完整工作流
-
----
-
-## Dependencies / 依赖
+### Dependencies
 
 | Package | Required | Notes |
 |---------|----------|-------|
 | torch, Pillow, numpy | Yes | Core |
-| opencv-python-headless | Yes | Image/video processing |
-| transformers | For Hunyuan Translator | 混元翻译器 |
-| rembg | Optional | Mask node background removal / 遮罩背景移除 |
-| av / PyAV | Optional | Video processor / 视频处理器 |
+| opencv-python-headless | Yes | Image/video ops |
+| transformers | For Hunyuan | Translator model |
+| rembg | Optional | Mask node BG removal |
+| av / PyAV | Optional | Video processor |
+
+### License
+
+MIT
 
 ---
 
-## License / 许可
+<a name="chinese"></a>
+
+## 中文
+
+ComfyUI 多功能工具插件，提供图像/视频处理、翻译、提示词生成等实用节点。
+
+### 安装
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/liangzoey/comfyui-ZoeyTool.git
+cd comfyui-ZoeyTool
+pip install -r requirements.txt
+```
+
+### 节点列表
+
+#### 🖼️ 图像处理
+
+| 节点 | 功能 |
+|------|------|
+| **真尺寸图像加载器** | 批量逐张加载文件夹中的图像，保持原始尺寸，自然排序，输出 Alpha 通道作为遮罩 |
+| **智能图像存储器** | 批量保存图像 + 文本文件，自定义序号位数、起始索引、覆盖模式 |
+| **遮罩边界框绘制** | 根据遮罩绘制矩形框，弹出调色板选色，透明度/填充/线宽调节，可选 rembg 背景移除 |
+| **图像批量裁剪器** | 批量裁剪图片（左/右/上/下自由裁剪），覆盖模式，保留原文件名 |
+| **多功能图像编辑器** | 翻转、旋转、分割、边缘检测、模糊、锐化、二值化、颜色反转、灰度化、透视变换、融合、风格化 |
+| **图像编辑提示词生成器** | 自动生成编辑提示词，支持文字/对象/风格/背景编辑、虚拟试穿、对象添加/移除 |
+
+#### 🎥 视频处理
+
+| 节点 | 功能 |
+|------|------|
+| **批量视频加载器** | 从目录加载视频文件列表，支持多格式（mp4/avi/mov），自然排序 |
+| **视频批处理器** | 批量处理视频（格式转换、帧率调整），自动安装依赖，跳过已处理文件 |
+| **智能视频存储器** | 保存处理后视频，支持按日期分类、元数据写入 |
+
+#### 📝 文本工具
+
+| 节点 | 功能 |
+|------|------|
+| **纯净翻译器** | 多引擎翻译：Helsinki-NLP 内置模型 / 百度API / 谷歌API，支持中/英/日/韩 |
+| **混元翻译器 (HY-MT1.5)** | 腾讯混元翻译模型本地部署，20+ 语言，自动下载缓存，术语干预和上下文翻译 |
+| **Wan2.2提示词生成器** | 影视级视频提示词生成，16 个控制维度：主体、场景、动作、光源、构图、镜头、风格 |
+
+#### 🔧 其他
+
+| 节点 | 功能 |
+|------|------|
+| **多文件批量重命名** | 批量重命名文件，正则查找替换，自然排序，自定义起始序号 |
+| **ZOEYTextEncodeQwenImageEditPlus** | Qwen 图像编辑编码器，支持多张参考图 |
+| **VR 360° 预览** | 360° 全景图 VR 预览，基于 Pannellum 全屏查看器 |
+
+### 功能亮点
+
+- **遮罩边界框绘制**：弹出式调色板、透明度/填充/线宽调节、可选 rembg 背景移除
+- **翻译**：纯净翻译器(Helsinki-NLP/百度/谷歌) + 混元翻译器(20+语言、自动缓存)
+- **视频流水线**：批量加载→处理→保存完整工作流
+- **图像编辑器**：15+ 种操作（翻转、旋转、模糊、边缘检测、锐化、融合、风格化）
+
+### 依赖
+
+| 包 | 必需 | 说明 |
+|----|------|------|
+| torch, Pillow, numpy | 是 | 核心 |
+| opencv-python-headless | 是 | 图像/视频处理 |
+| transformers | 混元翻译器 | 翻译模型 |
+| rembg | 可选 | 遮罩节点背景移除 |
+| av / PyAV | 可选 | 视频处理器 |
+
+### 许可
 
 MIT
