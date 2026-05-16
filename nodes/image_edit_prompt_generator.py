@@ -1,4 +1,4 @@
-﻿import re
+import re
 
 class 图像编辑提示词生成器:
     @classmethod

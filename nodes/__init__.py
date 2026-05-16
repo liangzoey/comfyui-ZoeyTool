@@ -1,37 +1,66 @@
-# 原有节点导入
+# ── 原有节点导入 ──
 from .batch_image_cropper import NODE_CLASS_MAPPINGS as CROPPER_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as CROPPER_DISPLAY
-from .zoey_tool import NODE_CLASS_MAPPINGS as ZOEY_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as ZOEY_DISPLAY
 from .multifunctional_image_editor import NODE_CLASS_MAPPINGS as EDITOR_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as EDITOR_DISPLAY
 from .image_edit_prompt_generator import NODE_CLASS_MAPPINGS as PROMPT_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
-
-# 新增：导入 mask_draw_rectangle
-# ⚠️ 注意：这里导入的是该文件中定义的变量名，必须与 .py 文件内一致
 from .mask_draw_rectangle import NODE_CLASS_MAPPINGS as MASK_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MASK_DISPLAY
 
-# 新增：VR 360° 预览节点导入
+# ── Zoey 系列节点拆分（zoey_tool 已拆分为多个文件） ──
+from .zoey_image import NODE_CLASS_MAPPINGS as IMAGE_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as IMAGE_DISPLAY
+from .zoey_rename import NODE_CLASS_MAPPINGS as RENAME_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as RENAME_DISPLAY
+from .zoey_video import NODE_CLASS_MAPPINGS as VIDEO_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as VIDEO_DISPLAY
+
+# ── 混元翻译器 ──
+from .zoey_hunyuan_translator import NODE_CLASS_MAPPINGS as TRANSLATE_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as TRANSLATE_DISPLAY
+
+# ── Wan2.2提示词生成器（从 zoey_tool 拆分） ──
+from .zoey_wan_prompt import NODE_CLASS_MAPPINGS as WAN_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as WAN_DISPLAY
+
+# ── 纯净翻译器（从 zoey_tool 拆分，内置模型/百度/谷歌） ──
+from .zoey_pure_translator import NODE_CLASS_MAPPINGS as PURE_TRANSLATE_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as PURE_TRANSLATE_DISPLAY
+
+# ── ZOEYTextEncodeQwenImageEditPlus（无 NODE_DISPLAY_NAME_MAPPINGS，需单独处理） ──
+from .ZOEYTextEncodeQwenImageEditPlus import NODE_CLASS_MAPPINGS as QWEN_MAPPINGS
+try:
+    from .ZOEYTextEncodeQwenImageEditPlus import NODE_DISPLAY_NAME_MAPPINGS as QWEN_DISPLAY
+except ImportError:
+    QWEN_DISPLAY = {}
+
+# ── VR 360° 预览节点（可选依赖） ──
 try:
     from .vr_360_preview import NODE_CLASS_MAPPINGS as VR_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as VR_DISPLAY
 except ImportError:
     VR_MAPPINGS = {}
     VR_DISPLAY = {}
 
-# 合并所有节点映射
-NODE_CLASS_MAPPINGS = { 
-    **CROPPER_MAPPINGS, 
-    **ZOEY_MAPPINGS, 
-    **EDITOR_MAPPINGS, 
-    **PROMPT_MAPPINGS, 
-    **MASK_MAPPINGS,   # ← 注入 mask_draw_rectangle 节点
-    **VR_MAPPINGS 
+# ── 合并所有节点映射 ──
+NODE_CLASS_MAPPINGS = {
+    **CROPPER_MAPPINGS,
+    **EDITOR_MAPPINGS,
+    **PROMPT_MAPPINGS,
+    **MASK_MAPPINGS,
+    **IMAGE_MAPPINGS,
+    **RENAME_MAPPINGS,
+    **VIDEO_MAPPINGS,
+    **TRANSLATE_MAPPINGS,
+    **WAN_MAPPINGS,
+    **PURE_TRANSLATE_MAPPINGS,
+    **QWEN_MAPPINGS,
+    **VR_MAPPINGS,
 }
 
-NODE_DISPLAY_NAME_MAPPINGS = { 
-    **CROPPER_DISPLAY, 
-    **ZOEY_DISPLAY, 
-    **EDITOR_DISPLAY, 
-    **PROMPT_DISPLAY, 
-    **MASK_DISPLAY,    # ← 注入 mask_draw_rectangle 显示名
-    **VR_DISPLAY 
+NODE_DISPLAY_NAME_MAPPINGS = {
+    **CROPPER_DISPLAY,
+    **EDITOR_DISPLAY,
+    **PROMPT_DISPLAY,
+    **MASK_DISPLAY,
+    **IMAGE_DISPLAY,
+    **RENAME_DISPLAY,
+    **VIDEO_DISPLAY,
+    **TRANSLATE_DISPLAY,
+    **WAN_DISPLAY,
+    **PURE_TRANSLATE_DISPLAY,
+    **QWEN_DISPLAY,
+    **VR_DISPLAY,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

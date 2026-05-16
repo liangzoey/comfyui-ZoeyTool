@@ -1,4 +1,4 @@
-﻿import math
+import math
 import torch
 import comfy.utils
 import node_helpers

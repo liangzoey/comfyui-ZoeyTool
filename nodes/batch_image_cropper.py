@@ -1,4 +1,4 @@
-﻿import os
+import os
 import glob
 import time
 import shutil
