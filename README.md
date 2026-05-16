@@ -1,179 +1,75 @@
-﻿# ZoeyTool Plugin​​
-# 进入 ComfyUI 自定义插件目录 | Navigate to ComfyUI custom_nodes directory
+# Zoey Tool - ComfyUI 自定义节点插件
+
+ComfyUI 多功能工具插件，提供图像/视频处理、翻译、提示词生成等实用节点。
+
+## 安装
+
+```bash
 cd ComfyUI/custom_nodes
-
-# 克隆仓库 | Clone repository
 git clone https://github.com/liangzoey/comfyui-ZoeyTool.git
-
-# 安装依赖 | Install dependencies
 cd comfyui-ZoeyTool
 pip install -r requirements.txt
+```
 
+## 节点列表
 
+### 🖼️ 图像处理
 
-以下是基于您提供的 ​​Zoey Tool​​ 功能截图整理的 ​​完整使用指南​​，涵盖各模块核心功能与操作说明：
-￼
-<img width="2202" height="1020" alt="image" src="https://github.com/user-attachments/assets/a0ba4aac-8a7a-4976-8c74-2ca7f5fae734" />
+| 节点 | 功能 |
+|------|------|
+| **Zoey - 真尺寸图像加载器** | 批量逐张加载文件夹中的图像，保持原始尺寸，支持按自然排序、自动重置计数器、输出 Alpha 通道作为遮罩 |
+| **Zoey - 智能图像存储器** | 批量保存图像 + 文本文件，支持自定义序号位数、起始索引、覆盖模式、批次名称前缀 |
+| **Zoey - 遮罩边界框绘制** | 根据遮罩在图像上绘制矩形框，弹出调色板选色，支持透明度/填充/线宽调节，集成 rembg 背景移除（可选） |
+| **zoey - 图像批量裁剪器** | 批量裁剪图片（左/右/上/下自由裁剪），支持覆盖模式和文件名保留 |
+| **zoey - 多功能图像编辑器** | 水平/垂直翻转、旋转、图像分割、边缘检测、高斯模糊、锐化、二值化、颜色反转、灰度化、透视变换、图像融合、风格化 |
+| **zoey - 图像编辑提示词生成器** | 根据编辑类型自动生成提示词，支持文字编辑、对象编辑、风格转换、虚拟试穿、背景替换、对象添加/移除等 |
 
+### 🎥 视频处理
 
-🖼️ ​​一、图像处理工具​​
-​​1. 多文件批量处理器​​<img width="1599" height="1083" alt="56beb106be48d8e11a4b6e982c000c0b" src="https://github.com/user-attachments/assets/50dea99e-4591-4d2c-a43f-73f9cee717fd" />
+| 节点 | 功能 |
+|------|------|
+| **Zoey - 批量视频加载器** | 从目录批量加载视频文件列表，支持多格式（mp4/avi/mov）、自然排序、数量限制 |
+| **Zoey - 视频批处理器** | 批量处理视频（格式转换、帧率调整），自动安装依赖，跳过已处理文件 |
+| **Zoey - 智能视频存储器** | 保存处理后的视频到指定目录，支持按日期分类、元数据写入 |
 
-https://via.placeholder.com/400x200/333/FFF?text=Zoey-多文件批量处理器
-​​功能​​：批量重命名/转换文件格式
-​​参数配置​​：
-yaml
-￼
-复制
-
-input_folder: 输入目录路径  
-output_folder: 输出目录路径  
-name_prefix: FILE  # 文件名前缀  
-file_types: jpg,png,txt,pdf,doc  # 支持格式  
-start_index: 1  # 起始序号  
-sort_method: filename  # 按文件名排序
-￼
-￼
-​​输出​​：
-•
-file_list：生成文件路径列表 → 连接至预览模块
+### 📝 文本工具
 
+| 节点 | 功能 |
+|------|------|
+| **Zoey - 纯净翻译器** | 多引擎翻译：Helsinki-NLP 内置模型 / 百度API / 谷歌API(免费)，支持中/英/日/韩互译 |
+| **Zoey - 混元翻译器 (HY-MT1.5)** | 腾讯混元翻译模型本地部署，支持 20+ 语言，模型自动下载缓存，支持术语干预和上下文翻译 |
+| **Zoey - Wan2.2提示词生成器** | 影视级视频提示词生成，控制主体/场景/动作/光源/构图/镜头/风格等 16 个维度 |
 
-​​2. 多功能图像编辑器​​<img width="2031" height="1117" alt="533dd1c4b717b6cdefd4ebe2f33f1ed5" src="https://github.com/user-attachments/assets/1a70602e-29e1-41be-af69-779eff767f18" />
+### 🔧 其他
 
-https://via.placeholder.com/400x200/333/FFF?text=多功能图像编辑器
-​​操作类型​​：
-•
-水平翻转、锐化（强度1.5）、模糊（半径5.0）
-•
-分割图像（横向/纵向各2块）
-​​参数示例​​：
-yaml
-￼
-复制
-
-模糊半径: 5.0  
-锐化强度: 1.5  
-融合权重: 0.50  
-阈值: 128  # 二值化阈值
-￼
-￼
+| 节点 | 功能 |
+|------|------|
+| **Zoey - 多文件批量重命名** | 批量重命名文件，支持正则查找替换、自然排序、起始序号和位数控制 |
+| **ZOEYTextEncodeQwenImageEditPlus** | Qwen 图像编辑编码器，支持多张参考图，配合 Qwen2-VL 使用 |
+| **zoey VR 360° 嵌入式预览** | 360° 全景图 VR 预览，基于 Pannellum，弹出全屏交互式查看器 |
 
+## 功能亮点
 
-​​3. 遮罩边界框绘制​​<img width="3140" height="1224" alt="594ee600d6e5042a26317acc2f7ca0ae" src="https://github.com/user-attachments/assets/e3f8af5e-0051-4f43-a363-7dd27b195cc0" />
+### 🎨 遮罩边界框绘制
+- 弹出式 HTML5 调色板自由选色
+- 透明度 / 填充(实心/空心) / 线宽 调节
+- 可选 rembg 背景移除（自动下载 RMBG-1.4 模型）
+- 边距百分比控制框的扩展范围
 
-https://via.placeholder.com/400x200/333/FFF?text=遮罩边界框绘制
-​​输入​​：图像 + 遮罩
-​​绘制参数​​：
-yaml
-￼
-复制
-
-线宽: 10  
-颜色: 红色（#FF0000）  
-边距百分比: 5%  # 边界框内边距  
-填充颜色: 透明（不透明度0）
-￼
-￼
-​​输出​​：带边界框的图像（尺寸不变）
-￼
+### 🌐 翻译支持
+- **纯净翻译器**：轻量级翻译，支持 Helsinki-NLP 模型 / 百度API / 谷歌API
+- **混元翻译器**：腾讯 HY-MT1.5 全量语言支持（20+ 语言），自动下载模型，支持术语干预和上下文翻译
 
+### 📹 视频处理流水线
+批量加载 → 批量处理 → 智能保存，完整视频批处理工作流
 
-🎥 ​​二、视频处理工具<img width="2686" height="750" alt="c3084c330435deac0cac0d2f5cc204bf" src="https://github.com/user-attachments/assets/255ecb66-409d-4ea0-99f7-d0f9a72125cf" />
+## 依赖
 
-​​1. 批量视频加载器​​
-https://via.placeholder.com/400x200/333/FFF?text=批量视频加载器
-​​配置​​：
-yaml
-￼
-复制
-
-源目录: D:/Videos/Input  
-file_pattern: *.mp4;*.avi;*.mov  # 文件类型  
-limit: 20  # 最大加载数
-￼
-￼
-​​2. 视频批处理器​​
-https://via.placeholder.com/400x200/333/FFF?text=视频批处理器
-​​处理选项​​：
-yaml
-￼
-复制
-
-frame_rate: 30  # 输出帧率  
-output_format: mp4  
-device: auto  # 自动选择GPU/CPU  
-skip_existing: 开启  # 跳过已处理文件
-￼
-￼
-​​3. 智能视频存储器​​
-https://via.placeholder.com/400x200/333/FFF?text=智能视频存储器
-​​存储规则​​：
-yaml
-￼
-复制
-
-output_directory: D:/视频输出  
-prefix: batch  # 文件名前缀  
-date_folder: 启用  # 按日期分类存储  
-start_index: 1  # 起始编号
-￼
-￼
-￼
+- torch, Pillow, numpy, opencv-python-headless
+- transformers（混元翻译器）
+- rembg（可选，遮罩节点背景移除功能）
+- av / PyAV（可选，视频处理器）
 
+## 许可
 
-🌐 ​​三、辅助工具​​
-
-
-​​1. 纯净翻译器​​<img width="2535" height="1137" alt="dc4e6a1eaa54692dd652478e9bf1e27e" src="https://github.com/user-attachments/assets/1dd23b6b-4700-40c6-b10f-b34c082f0f70" />
-
-https://via.placeholder.com/400x200/333/FFF?text=纯净翻译器
-​​配置​​：
-yaml
-￼
-复制
-
-source_lang: auto  # 自动检测源语言  
-target_lang: 英文  
-engine: 内置模型  # 或百度API/谷歌API  
-输入: "你好" → 输出: "Hello."
-￼
-￼
-
-
-​​2. 图像编辑提示词生成器​​<img width="2296" height="975" alt="adad1ed13ca0ce85459c4b1cc1f53557" src="https://github.com/user-attachments/assets/d21bdafb-1184-4fb6-833c-1d5032ae4f24" />
-
-https://via.placeholder.com/400x200/333/FFF?text=提示词生成器
-​​用例​​：
-yaml
-￼
-复制
-
-编辑类型: 对象编辑  
-目标元素: 头巾 → 新值: 帽子  
-视角方向: 正面  
-自定义提示词: "把头巾替换为帽子"
-￼
-￼
-​​
-3. 图像批量裁剪器​​<img width="1317" height="1238" alt="df58da40f83a28039aeb86fc24c24ee5" src="https://github.com/user-attachments/assets/8f7d4d72-2550-4c2f-a616-11398999e86f" />
-
-https://via.placeholder.com/400x200/333/FFF?text=图像批量裁剪器
-​​裁剪参数​​：
-yaml
-￼
-复制
-
-left_crop: 0   # 左裁剪像素  
-right_crop: 0  
-top_crop: 0  
-bottom_crop: 0  
-preserve_names: true  # 保留原文件名  
-prefix: cropped_  # 输出文件名前缀
-
-<img width="851" height="765" alt="f2d98404744a2a339b6502d1c96e0cd9" src="https://github.com/user-attachments/assets/cd6e07ee-13b0-4c04-bffe-bc30c3b9ebe8" />
-
-
-
-
-
+MIT
