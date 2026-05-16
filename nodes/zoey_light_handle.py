@@ -47,50 +47,11 @@ class ZoeyLightHandle:
     CATEGORY = "Zoey工具集/图像编辑"
     OUTPUT_NODE = True
 
-    def _build_prompt(self, handle_x, handle_y, intensity, color_hex):
-        """Generate lighting direction prompt from 2D handle position."""
-        azimuth = (handle_x * 360) % 360
-        elevation = 90 - handle_y * 180
-        elevation = max(-90, min(90, elevation))
-
-        if (azimuth >= 337.5) or (azimuth < 22.5):
-            pos_desc = "light source in front"
-        elif 22.5 <= azimuth < 67.5:
-            pos_desc = "light source from the front-right"
-        elif 67.5 <= azimuth < 112.5:
-            pos_desc = "light source from the right"
-        elif 112.5 <= azimuth < 157.5:
-            pos_desc = "light source from the back-right"
-        elif 157.5 <= azimuth < 202.5:
-            pos_desc = "light source from behind"
-        elif 202.5 <= azimuth < 247.5:
-            pos_desc = "light source from the back-left"
-        elif 247.5 <= azimuth < 292.5:
-            pos_desc = "light source from the left"
-        else:
-            pos_desc = "light source from the front-left"
-
-        e = elevation
-        if -90 <= e < -30:
-            elev_desc = "uplighting, light source positioned below, light shining upwards"
-        elif -30 <= e < -10:
-            elev_desc = "low-angle light source from below, upward illumination"
-        elif -10 <= e < 20:
-            elev_desc = "horizontal level light source"
-        elif 20 <= e < 60:
-            elev_desc = "high-angle light source"
-        else:
-            elev_desc = "overhead top-down light source"
-
-        if intensity < 3.0:
-            int_desc = "soft"
-        elif intensity < 7.0:
-            int_desc = "bright"
-        else:
-            int_desc = "intense"
-
-        constraints = "SCENE LOCK, FIXED VIEWPOINT, maintaining character consistency and pose. RELIGHTING ONLY: "
-        return f"{constraints}{pos_desc}, {elev_desc}, {int_desc} colored light ({color_hex})"
+    def _build_prompt(self, behind_subject):
+        """Generate lighting prompt referencing the visual color block in preview_image."""
+        if behind_subject:
+            return "根据图中色块方向和颜色打光，并移除色块，光源在主体后方"
+        return "根据图中色块方向和颜色打光，并移除色块"
 
     def _generate_circular_mask(self, h, w, cx, cy, radius):
         """Generate a smooth circular gradient mask centered at (cx, cy)."""
@@ -164,7 +125,7 @@ class ZoeyLightHandle:
         light_mask = light_mask.unsqueeze(0).to(torch.float32)
 
         # Lighting prompt
-        prompt = self._build_prompt(handle_x, handle_y, intensity, light_color)
+        prompt = self._build_prompt(behind_subject)
 
         # Annotated image output
         annotated = self._draw_handle_overlay(img, width, height, cx, cy, radius, light_color)
