@@ -84,7 +84,7 @@ class ZoeyLightHandle:
     CATEGORY = "Zoey工具集/图像编辑"
     OUTPUT_NODE = True
 
-    def _build_prompt(self, handle_x, handle_y, behind_subject):
+    def _build_prompt(self, handle_x, handle_y, behind_subject, light_color):
         th = 0.35
         if handle_x < th:
             x_dir = "左"
@@ -119,7 +119,7 @@ class ZoeyLightHandle:
             else:
                 direction = f"{x_dir}前{y_dir}方"
 
-        return f"根据图中色块方向和颜色打光，并移除色块，光源来自{direction}"
+        return f"根据图中色块方向和颜色打光，并移除色块，{light_color}色光光源来自{direction}"
 
     def _generate_shape_mask(self, h, w, cx, cy, radius, shape):
         y_coords, x_coords = torch.meshgrid(
@@ -283,7 +283,7 @@ class ZoeyLightHandle:
         light_mask = light_mask.unsqueeze(0).to(torch.float32)
 
         # Lighting prompt
-        prompt = self._build_prompt(handle_x, handle_y, behind_subject)
+        prompt = self._build_prompt(handle_x, handle_y, behind_subject, light_color)
 
         # Annotated image output
         annotated = self._draw_handle_overlay(
