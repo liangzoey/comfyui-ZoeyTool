@@ -1,4 +1,5 @@
 import { app } from "../../../../scripts/app.js";
+import { VIEWER_HTML } from "./light_handle_3d_viewer.js";
 
 app.registerExtension({
     name: "zoey.lightHandle",
@@ -21,28 +22,6 @@ app.registerExtension({
                     setTimeout(() => { if (w.element) w.element.style.display = "none"; }, 50);
                 };
                 hideTextWidget("light_color");
-
-                // ── Container / Canvas / Color bar ──
-                const container = document.createElement("div");
-                container.style.display = "flex";
-                container.style.flexDirection = "column";
-                container.style.width = "100%";
-                container.style.gap = "4px";
-
-                const canvas = document.createElement("canvas");
-                canvas.style.width = "100%";
-                canvas.style.height = "280px";
-                canvas.style.border = "1px solid rgba(255,255,255,0.1)";
-                canvas.style.borderRadius = "8px";
-                canvas.style.backgroundColor = "#0a0a0f";
-                canvas.style.cursor = "crosshair";
-                canvas.style.display = "block";
-
-                const ctx = canvas.getContext("2d");
-                const dpr = window.devicePixelRatio || 1;
-                let cachedImage = null;
-                let imgNaturalW = 0;
-                let imgNaturalH = 0;
 
                 // ── Color bar ──
                 const colorBar = document.createElement("div");
@@ -78,12 +57,30 @@ app.registerExtension({
                     hexLabel.textContent = val.toUpperCase();
                 };
 
+                const syncViewer = () => {
+                    if (!node._viewerReady || !iframe.contentWindow) return;
+                    const azW = getW("azimuth");
+                    const elW = getW("elevation");
+                    const cW = getW("light_color");
+                    const bsW = getW("ball_size");
+                    const hsW = getW("handle_shape");
+                    iframe.contentWindow.postMessage({
+                        type: "SYNC",
+                        azimuth: azW?.value ?? 0,
+                        elevation: elW?.value ?? 30,
+                        lightColor: cW?.value || "#FFFFFF",
+                        ballSize: bsW?.value ?? 0.3,
+                        handleShape: hsW?.value || "圆形",
+                    }, "*");
+                };
+
                 colorInput.addEventListener("input", () => {
                     const val = colorInput.value.toUpperCase();
                     swatch.style.backgroundColor = val;
                     hexLabel.textContent = val;
                     const cw = getW("light_color");
-                    if (cw) { cw.value = val; draw(); }
+                    if (cw) cw.value = val;
+                    syncViewer();
                     app.graph.setDirtyCanvas(true, true);
                 });
 
@@ -91,219 +88,30 @@ app.registerExtension({
                 colorBar.appendChild(swatch);
                 colorBar.appendChild(hexLabel);
                 colorBar.appendChild(colorInput);
-                container.appendChild(canvas);
+
+                // ── Container / iframe 3D viewer ──
+                const container = document.createElement("div");
+                container.style.display = "flex";
+                container.style.flexDirection = "column";
+                container.style.width = "100%";
+                container.style.gap = "4px";
+
+                const iframe = document.createElement("iframe");
+                iframe.style.width = "100%";
+                iframe.style.height = "280px";
+                iframe.style.border = "1px solid rgba(255,255,255,0.1)";
+                iframe.style.borderRadius = "8px";
+                iframe.style.backgroundColor = "#0a0a0f";
+                iframe.style.display = "block";
+                iframe.allow = "autoplay";
+
+                const blob = new Blob([VIEWER_HTML], { type: "text/html" });
+                const blobUrl = URL.createObjectURL(blob);
+                iframe.src = blobUrl;
+                iframe.addEventListener("load", () => { iframe._blobUrl = blobUrl; });
+
+                container.appendChild(iframe);
                 container.appendChild(colorBar);
-
-                // ── Image loader ──
-                const loadImage = (url) => {
-                    const img = new Image();
-                    img.crossOrigin = "anonymous";
-                    img.onload = () => {
-                        cachedImage = img;
-                        imgNaturalW = img.naturalWidth || img.width;
-                        imgNaturalH = img.naturalHeight || img.height;
-                        draw();
-                    };
-                    img.onerror = () => { draw(); };
-                    img.src = url;
-                };
-
-                // ── Try to load image from connected input node ──
-                // Returns true if a source was found (image loading may still be in-flight)
-                const tryLoadFromInput = () => {
-                    const imgInput = node.inputs?.find(inp => inp.name === "image");
-                    if (!imgInput || imgInput.link == null) return false;
-
-                    const link = app.graph.links[imgInput.link];
-                    if (!link) return false;
-
-                    const srcNode = app.graph.getNodeById(link[0]);
-                    if (!srcNode) return false;
-
-                    // Method 1: cached imgs on source node (LoadImage, etc.)
-                    if (srcNode.imgs && srcNode.imgs.length > 0 && srcNode.imgs[0].src) {
-                        loadImage(srcNode.imgs[0].src);
-                        return true;
-                    }
-
-                    // Method 2: filename widget → ComfyUI /view endpoint
-                    const imgWidget = srcNode.widgets?.find(w => w.name === "image");
-                    if (imgWidget && typeof imgWidget.value === "string" && /\.\w+$/.test(imgWidget.value)) {
-                        const parts = imgWidget.value.split("/");
-                        const fn = parts.pop();
-                        const sub = parts.join("/");
-                        loadImage(`/view?filename=${encodeURIComponent(fn)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`);
-                        return true;
-                    }
-
-                    return false;
-                };
-
-                // Retry wrapper: keeps trying while src not ready (link or imgs)
-                const retryLoad = (maxRetries = 10, delay = 500) => {
-                    let tries = 0;
-                    const attempt = () => {
-                        tries++;
-                        if (tryLoadFromInput()) return; // success
-                        if (tries < maxRetries) setTimeout(attempt, delay);
-                    };
-                    attempt();
-                };
-
-                // ── Draw (image-aware: handles letterbox & scale) ──
-                const drawShape = (cx, cy, br, lr, lg, lb, opacity, shape, iw, ih) => {
-                    ctx.beginPath();
-                    if (shape === "方形") {
-                        ctx.rect(cx - br + 1, cy - br + 1, (br - 1) * 2, (br - 1) * 2);
-                    } else if (shape === "菱形") {
-                        ctx.moveTo(cx, cy - br + 1);
-                        ctx.lineTo(cx + br - 1, cy);
-                        ctx.lineTo(cx, cy + br - 1);
-                        ctx.lineTo(cx - br + 1, cy);
-                        ctx.closePath();
-                    } else if (shape === "三角形") {
-                        const angle = Math.atan2(cy - ih / 2, cx - iw / 2);
-                        const r2 = br - 2;
-                        ctx.moveTo(cx + r2 * Math.cos(angle), cy + r2 * Math.sin(angle));
-                        ctx.lineTo(cx + r2 * 0.5 * Math.cos(angle + 2.094), cy + r2 * 0.5 * Math.sin(angle + 2.094));
-                        ctx.lineTo(cx + r2 * 0.5 * Math.cos(angle - 2.094), cy + r2 * 0.5 * Math.sin(angle - 2.094));
-                        ctx.closePath();
-                    } else { // 圆形
-                        ctx.arc(cx, cy, br - 1, 0, Math.PI * 2);
-                    }
-                    ctx.fillStyle = `rgba(${lr},${lg},${lb},${0.2 * opacity})`;
-                    ctx.fill();
-                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},${0.8 * opacity})`;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                };
-
-                const draw = () => {
-                    const rect = canvas.getBoundingClientRect();
-                    const cw = rect.width;
-                    const ch = rect.height;
-                    if (cw === 0 || ch === 0) return;
-
-                    canvas.width = cw * dpr;
-                    canvas.height = ch * dpr;
-                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-                    ctx.fillStyle = "#0a0a0f";
-                    ctx.fillRect(0, 0, cw, ch);
-
-                    // Image display rect (accounts for scale + letterbox)
-                    let imgOffX = 0, imgOffY = 0;
-                    let imgDispW = cw, imgDispH = ch;
-                    const hasImage = cachedImage && imgNaturalW > 0;
-
-                    if (hasImage) {
-                        const scale = Math.min(cw / imgNaturalW, ch / imgNaturalH);
-                        imgDispW = imgNaturalW * scale;
-                        imgDispH = imgNaturalH * scale;
-                        imgOffX = (cw - imgDispW) / 2;
-                        imgOffY = (ch - imgDispH) / 2;
-                        ctx.drawImage(cachedImage, imgOffX, imgOffY, imgDispW, imgDispH);
-                    } else {
-                        ctx.strokeStyle = "rgba(255,255,255,0.05)";
-                        ctx.lineWidth = 1;
-                        for (let x = 0; x < cw; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke(); }
-                        for (let y = 0; y < ch; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke(); }
-                        ctx.fillStyle = "rgba(255,255,255,0.3)";
-                        ctx.font = "14px sans-serif";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText("Connect an image and execute to preview", cw / 2, ch / 2);
-                    }
-
-                    // ── Handle ──
-                    const hx = getW("handle_x")?.value ?? 0.5;
-                    const hy = getW("handle_y")?.value ?? 0.5;
-                    const bs = getW("ball_size")?.value ?? 0.15;
-                    const lc = getW("light_color")?.value || "#FFFFFF";
-                    const shape = getW("handle_shape")?.value || "圆形";
-                    const intensity = getW("intensity")?.value ?? 5.0;
-                    const opacity = Math.max(0.05, Math.min(1.0, intensity / 10.0));
-
-                    const px = imgOffX + hx * imgDispW;
-                    const py = imgOffY + hy * imgDispH;
-                    const br = Math.max(6, bs * Math.max(imgDispW, imgDispH));
-
-                    const hex = lc.replace("#", "");
-                    const lr = parseInt(hex.substring(0, 2), 16) || 255;
-                    const lg = parseInt(hex.substring(2, 4), 16) || 255;
-                    const lb = parseInt(hex.substring(4, 6), 16) || 255;
-
-                    // Glow (fades with intensity)
-                    const grad = ctx.createRadialGradient(px, py, 0, px, py, br * 2.5);
-                    grad.addColorStop(0, `rgba(${lr},${lg},${lb},${0.2 * opacity})`);
-                    grad.addColorStop(1, `rgba(${lr},${lg},${lb},0)`);
-                    ctx.fillStyle = grad;
-                    ctx.beginPath();
-                    ctx.arc(px, py, br * 2.5, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    ctx.beginPath();
-                    ctx.arc(px, py, br * 1.8, 0, Math.PI * 2);
-                    ctx.strokeStyle = `rgba(${lr},${lg},${lb},${0.2 * opacity})`;
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-
-                    // Shape (fill + outline, opacity controlled by intensity)
-                    drawShape(px, py, br, lr, lg, lb, opacity, shape, imgDispW, imgDispH);
-
-                    // Center dot only (no crosshair)
-                    ctx.beginPath();
-                    ctx.arc(px, py, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = `rgba(${lr},${lg},${lb},${opacity})`;
-                    ctx.fill();
-
-                    updateSwatch();
-                };
-
-                // ── Interaction ──
-                const posFromEvent = (clientX, clientY) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const cw = rect.width, ch = rect.height;
-                    let imgOffX = 0, imgOffY = 0, imgDispW = cw, imgDispH = ch;
-                    if (imgNaturalW > 0 && imgNaturalH > 0) {
-                        const scale = Math.min(cw / imgNaturalW, ch / imgNaturalH);
-                        imgDispW = imgNaturalW * scale;
-                        imgDispH = imgNaturalH * scale;
-                        imgOffX = (cw - imgDispW) / 2;
-                        imgOffY = (ch - imgDispH) / 2;
-                    }
-                    return {
-                        x: Math.max(0, Math.min(1, (clientX - rect.left - imgOffX) / imgDispW)),
-                        y: Math.max(0, Math.min(1, (clientY - rect.top - imgOffY) / imgDispH)),
-                    };
-                };
-
-                const setPos = (pos) => {
-                    const hxW = getW("handle_x"), hyW = getW("handle_y");
-                    if (hxW) hxW.value = Math.round(pos.x * 100) / 100;
-                    if (hyW) hyW.value = Math.round(pos.y * 100) / 100;
-                    draw();
-                    app.graph.setDirtyCanvas(true, true);
-                };
-
-                let dragging = false;
-                canvas.addEventListener("mousedown", (e) => { dragging = true; setPos(posFromEvent(e.clientX, e.clientY)); });
-                canvas.addEventListener("mousemove", (e) => { if (!dragging) return; setPos(posFromEvent(e.clientX, e.clientY)); });
-                const onMouseUp = () => { dragging = false; };
-                window.addEventListener("mouseup", onMouseUp);
-
-                canvas.addEventListener("wheel", (e) => {
-                    e.preventDefault();
-                    const bs = getW("ball_size");
-                    if (!bs) return;
-                    bs.value = Math.max(0.02, Math.min(0.5, bs.value + (e.deltaY > 0 ? -0.01 : 0.01)));
-                    draw();
-                    app.graph.setDirtyCanvas(true, true);
-                }, { passive: false });
-
-                canvas.addEventListener("touchstart", (e) => { e.preventDefault(); dragging = true; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
-                canvas.addEventListener("touchmove", (e) => { e.preventDefault(); if (!dragging) return; const t = e.touches[0]; setPos(posFromEvent(t.clientX, t.clientY)); }, { passive: false });
-                canvas.addEventListener("touchend", (e) => { e.preventDefault(); dragging = false; }, { passive: false });
 
                 // ── DOM widget ──
                 const widget = this.addDOMWidget("light_handle_viewer", "LIGHT_HANDLE", container, {
@@ -312,61 +120,216 @@ app.registerExtension({
                 });
                 widget.computeSize = (width) => [Math.max(width || 350, 350), 320];
 
-                // ── Connection change → reload image ──
+                // ── Viewer state ──
+                node._viewerIframe = iframe;
+                node._viewerReady = false;
+                node._pendingImageSend = null;
+
+                // ── postMessage handler ──
+                const onMessage = (event) => {
+                    if (event.source !== iframe.contentWindow) return;
+                    const data = event.data;
+                    if (!data || !data.type) return;
+
+                    if (data.type === "VIEWER_READY") {
+                        node._viewerReady = true;
+                        const azW = getW("azimuth");
+                        const elW = getW("elevation");
+                        const cW = getW("light_color");
+                        const bsW = getW("ball_size");
+                            const hsW = getW("handle_shape");
+                        iframe.contentWindow.postMessage({
+                            type: "INIT",
+                            azimuth: azW?.value ?? 0,
+                            elevation: elW?.value ?? 30,
+                            lightColor: cW?.value || "#FFFFFF",
+                            ballSize: bsW?.value ?? 0.3,
+                            handleShape: hsW?.value || "圆形",
+                        }, "*");
+                        if (node._pendingImageSend) {
+                            node._pendingImageSend();
+                            node._pendingImageSend = null;
+                        }
+                    } else if (data.type === "ANGLE_UPDATE") {
+                        const azW = getW("azimuth");
+                        const elW = getW("elevation");
+                        const bsW = getW("behind_subject");
+                        if (azW) azW.value = data.azimuth;
+                        if (elW) elW.value = data.elevation;
+                        // Auto-toggle behind_subject: behind when |azimuth| > 90
+                        if (bsW) {
+                            const behind = Math.abs(data.azimuth) > 90;
+                            if (bsW.value !== behind) {
+                                bsW.value = behind;
+                            }
+                        }
+                        updateSwatch();
+                        app.graph.setDirtyCanvas(true, true);
+                    } else if (data.type === "BALL_SIZE_UPDATE") {
+                        const bsW = getW("ball_size");
+                        if (bsW) bsW.value = data.ballSize;
+                        app.graph.setDirtyCanvas(true, true);
+                    }
+                };
+                window.addEventListener("message", onMessage);
+
+                // ── Image: convert to data URL, send to viewer ──
+                const sendImageToViewer = (url) => {
+                    const send = () => {
+                        if (iframe.contentWindow) {
+                            iframe.contentWindow.postMessage({ type: "UPDATE_IMAGE", imageUrl: url }, "*");
+                        }
+                    };
+                    if (node._viewerReady) send();
+                    else node._pendingImageSend = send;
+                };
+
+                const loadImage = (url) => {
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.onload = () => {
+                        const c = document.createElement("canvas");
+                        c.width = img.naturalWidth || img.width;
+                        c.height = img.naturalHeight || img.height;
+                        const cx = c.getContext("2d");
+                        cx.drawImage(img, 0, 0);
+                        sendImageToViewer(c.toDataURL("image/png"));
+                    };
+                    img.onerror = () => {};
+                    img.src = url;
+                };
+
+                // ── Try to load image from connected input node ──
+                const tryLoadFromInput = () => {
+                    const imgInput = node.inputs?.find(inp => inp.name === "image");
+                    if (!imgInput || imgInput.link == null) return false;
+
+                    const targetLinkId = imgInput.link;
+                    let srcNode = null;
+                    for (const n of (app.graph._nodes || [])) {
+                        if (n === node || !n.outputs) continue;
+                        for (const output of n.outputs) {
+                            if (!output.links) continue;
+                            for (const lid of output.links) {
+                                if (lid != null && lid === targetLinkId) { srcNode = n; break; }
+                            }
+                            if (srcNode) break;
+                        }
+                        if (srcNode) break;
+                    }
+                    if (!srcNode) {
+                        const linkData = app.graph.links?.[targetLinkId];
+                        if (linkData) srcNode = app.graph.getNodeById(linkData[0]);
+                        if (!srcNode) return false;
+                    }
+
+                    if (srcNode.imgs && srcNode.imgs.length > 0) {
+                        const first = srcNode.imgs[0];
+                        const src = typeof first === "string" ? first : (first?.src || first?._src || null);
+                        if (src) { loadImage(src); return true; }
+                    }
+                    if (srcNode.image) {
+                        const src = typeof srcNode.image === "string" ? srcNode.image : srcNode.image?.src;
+                        if (src) { loadImage(src); return true; }
+                    }
+                    const imgWidget = srcNode.widgets?.find(w =>
+                        w.name === "image" && typeof w.value === "string" && /\.\w+$/.test(w.value)
+                    );
+                    if (imgWidget) {
+                        const parts = imgWidget.value.split("/");
+                        const fn = parts.pop();
+                        const sub = parts.join("/");
+                        loadImage(
+                          window.location.origin +
+                          `/view?filename=${encodeURIComponent(fn)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`
+                        );
+                        return true;
+                    }
+                    for (const w of (srcNode.widgets || [])) {
+                        if (typeof w.value === "string" && /\.(png|jpg|jpeg|webp|bmp)$/i.test(w.value)) {
+                            const parts = w.value.split("/");
+                            const fn = parts.pop();
+                            const sub = parts.join("/");
+                            loadImage(
+                              window.location.origin +
+                              `/view?filename=${encodeURIComponent(fn)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`
+                            );
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                const retryLoad = (maxRetries = 10, delay = 500) => {
+                    let tries = 0;
+                    const attempt = () => {
+                        tries++;
+                        if (tryLoadFromInput()) return;
+                        if (tries < maxRetries) setTimeout(attempt, delay);
+                    };
+                    attempt();
+                };
+
+                // ── Connection change ──
                 const origOnConnectionsChange = nodeType.prototype.onConnectionsChange;
                 nodeType.prototype.onConnectionsChange = function (slotType, slot, isConnected, link, outputSlot) {
                     if (origOnConnectionsChange) origOnConnectionsChange.apply(this, arguments);
                     if (slotType === 1 && node.inputs[slot]?.name === "image") {
                         if (isConnected) {
-                            setTimeout(() => retryLoad(8, 400), 100);
-                        } else {
-                            cachedImage = null;
-                            imgNaturalW = 0;
-                            imgNaturalH = 0;
-                            draw();
+                            if (!tryLoadFromInput()) {
+                                setTimeout(() => retryLoad(8, 400), 100);
+                            }
                         }
                     }
                 };
 
-                // ── Try loading from input on configure (workflow restore) ──
+                // ── Configure (workflow restore) ──
                 const origConfigure = this.configure;
                 this.configure = function (data) {
                     if (origConfigure) origConfigure.apply(this, arguments);
                     setTimeout(() => retryLoad(12, 400), 200);
                 };
 
-                // ── Receive executed image (fallback) ──
+                // ── Receive executed image ──
                 const onExecuted = this.onExecuted;
                 this.onExecuted = function (message) {
                     if (onExecuted) onExecuted.apply(this, arguments);
                     if (message?.image_base64?.[0]) {
-                        loadImage(message.image_base64[0]);
+                        sendImageToViewer(message.image_base64[0]);
                     }
                 };
 
-                // ── Widget change → redraw ──
+                // ── Widget change → sync viewer ──
                 const origOnWidgetChanged = this.onWidgetChanged;
                 this.onWidgetChanged = function (name, value, old_val, w) {
                     if (origOnWidgetChanged) origOnWidgetChanged.apply(this, arguments);
-                    if (["handle_x", "handle_y", "ball_size", "light_color", "handle_shape", "intensity"].includes(name)) {
-                        draw();
+                    if (["azimuth", "elevation", "light_color", "ball_size"].includes(name)) {
+                        if (name === "light_color") updateSwatch();
+                        syncViewer();
+                    }
+                    if (name === "handle_shape" && node._viewerReady && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({ type: "SHAPE_UPDATE", handleShape: value }, "*");
                     }
                 };
 
-                // ── Resize → redraw ──
-                const resizeObserver = new ResizeObserver(() => draw());
-                resizeObserver.observe(canvas);
+                // ── Resize → notify viewer ──
+                let resizeTimeout = null;
+                const resizeObserver = new ResizeObserver(() => {
+                    if (resizeTimeout) clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        if (node._viewerReady && iframe.contentWindow) {
+                            iframe.contentWindow.postMessage({ type: "RESIZE" }, "*");
+                        }
+                    }, 100);
+                });
+                resizeObserver.observe(iframe);
 
                 // ── Global graph change listener ──
-                const afterGraphChange = () => {
-                    if (cachedImage) return;
-                    setTimeout(() => retryLoad(5, 500), 100);
-                };
                 app.graph.onAfterChange = (() => {
                     const orig = app.graph.onAfterChange;
                     return function (event) {
                         if (orig) orig.apply(this, arguments);
-                        afterGraphChange();
+                        setTimeout(() => retryLoad(5, 500), 100);
                     };
                 })();
 
@@ -374,16 +337,17 @@ app.registerExtension({
                 const origOnRemoved = this.onRemoved;
                 this.onRemoved = function () {
                     resizeObserver.disconnect();
-                    window.removeEventListener("mouseup", onMouseUp);
-                    cachedImage = null;
+                    window.removeEventListener("message", onMessage);
+                    if (resizeTimeout) clearTimeout(resizeTimeout);
+                    node._pendingImageSend = null;
+                    node._viewerReady = false;
+                    node._viewerIframe = null;
+                    if (iframe._blobUrl) URL.revokeObjectURL(iframe._blobUrl);
                     if (origOnRemoved) origOnRemoved.apply(this, arguments);
                 };
 
                 this.setSize([350, 400]);
-
-                // Initial: retry up to 12 times × 400ms = ~5s
                 setTimeout(() => retryLoad(12, 400), 300);
-                setTimeout(draw, 100);
 
                 return r;
             };
