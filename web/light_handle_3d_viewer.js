@@ -17,7 +17,7 @@ canvas:active{cursor:grabbing}
 </style>
 </head>
 <body>
-<div class="info" id="info">Az: <span id="azVal">0</span>&deg; El: <span id="elVal">30</span>&deg; &bull; 拖拽调整方向 | 滚轮调整大小</div>
+<div class="info" id="info">Az: <span id="azVal">0</span>&deg; El: <span id="elVal">30</span>&deg; &bull; 拖拽旋转 | 双击定位 | 滚轮调大小</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
 <script>
 // --- Scene ---
@@ -294,12 +294,44 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 
-// --- Mouse drag ---
+// --- Mouse: drag orb (mousedown anywhere) OR double-click card to position ---
+var raycaster = new THREE.Raycaster();
+var mouseVec = new THREE.Vector2();
+
+function positionFromCardClick(e) {
+  mouseVec.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouseVec.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouseVec, camera);
+  var hits = raycaster.intersectObject(card);
+  if (hits.length > 0) {
+    var uv = hits[0].uv;
+    if (!uv) return;
+    var hx = uv.x;           // 0 left → 1 right
+    var hy = 1 - uv.y;       // 0 top → 1 bottom
+    // Inverse of: handle_x = 0.5 + 0.5*cos(el)*sin(az), handle_y = 0.5 - 0.5*sin(el)
+    var elRad = Math.asin(Math.max(-1, Math.min(1, (0.5 - hy) / 0.5)));
+    var cosEl = Math.cos(elRad);
+    if (Math.abs(cosEl) > 0.001) {
+      var azRad = Math.asin(Math.max(-1, Math.min(1, (hx - 0.5) / (0.5 * cosEl))));
+      azimuth = Math.round(azRad * 180 / Math.PI);
+    } else {
+      azimuth = 0;  // gimbal lock at poles
+    }
+    elevation = Math.round(elRad * 180 / Math.PI);
+    updateAll();
+    window.parent.postMessage({ type: 'ANGLE_UPDATE', azimuth: azimuth, elevation: elevation }, '*');
+  }
+}
+
+renderer.domElement.addEventListener('dblclick', function(e) {
+  positionFromCardClick(e);
+});
+
 renderer.domElement.addEventListener('mousedown', function() { isDragging = true; });
 window.addEventListener('mousemove', function(e) {
   if (!isDragging) return;
-  azimuth = Math.max(-180, Math.min(180, azimuth + e.movementX * 0.5));
-  elevation = Math.max(-90, Math.min(90, elevation - e.movementY * 0.5));
+  azimuth = Math.max(-180, Math.min(180, azimuth + e.movementX * 0.7));
+  elevation = Math.max(-90, Math.min(90, elevation - e.movementY * 0.7));
   updateAll();
   window.parent.postMessage({ type: 'ANGLE_UPDATE', azimuth: Math.round(azimuth), elevation: Math.round(elevation) }, '*');
 });
@@ -325,8 +357,8 @@ renderer.domElement.addEventListener('touchstart', function(e) {
 renderer.domElement.addEventListener('touchmove', function(e) {
   var t = Array.from(e.changedTouches).find(function(x) { return x.identifier === touchId; });
   if (!t) return;
-  azimuth = Math.max(-180, Math.min(180, azimuth + (t.clientX - lastTX) * 0.5));
-  elevation = Math.max(-90, Math.min(90, elevation - (t.clientY - lastTY) * 0.5));
+  azimuth = Math.max(-180, Math.min(180, azimuth + (t.clientX - lastTX) * 0.7));
+  elevation = Math.max(-90, Math.min(90, elevation - (t.clientY - lastTY) * 0.7));
   lastTX = t.clientX; lastTY = t.clientY;
   updateAll();
   window.parent.postMessage({ type: 'ANGLE_UPDATE', azimuth: Math.round(azimuth), elevation: Math.round(elevation) }, '*');
