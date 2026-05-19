@@ -30,7 +30,7 @@ except ImportError:
     HAS_REMBG = False
     logger.warning("rembg not installed. behind-subject auto mode requires: pip install rembg")
 
-RMBG_MODEL_DIR = os.path.join("models", "rembg")
+RMBG_MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "rembg")
 RMBG_MODEL_PATH = os.path.join(RMBG_MODEL_DIR, "RMBG-1.4.pth")
 RMBG_MODEL_URL = "https://huggingface.co/zhengchong/RMBG-1.4/resolve/main/RMBG-1.4.pth"
 

@@ -25,12 +25,11 @@ class HunyuanTranslatorNode:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             # 从配置文件获取模型路径
-            self.LOCAL_MODEL_ROOT = config.get('model_path', 
-                                             os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "llm"))
+            self.LOCAL_MODEL_ROOT = config.get('model_path',
+                                             os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "LLM"))
         else:
-            # 如果没有配置文件，使用默认路径 - ComfyUI 根目录下的 models/llm 子目录
-            # custom_nodes/comfyui-ZoeyTool/nodes/zoey_hunyuan_translator.py -> ComfyUI/models/llm
-            self.LOCAL_MODEL_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "llm")
+            # 默认路径 - ComfyUI 根目录下的 models/LLM 子目录
+            self.LOCAL_MODEL_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "LLM")
         
         # 规范化路径，解决跨平台问题
         self.LOCAL_MODEL_ROOT = os.path.normpath(self.LOCAL_MODEL_ROOT)

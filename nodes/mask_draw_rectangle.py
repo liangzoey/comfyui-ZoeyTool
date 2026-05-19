@@ -15,8 +15,8 @@ except ImportError:
     HAS_REMBG = False
     logger.warning("未安装 rembg，背景移除功能将不可用。请运行: pip install rembg")
 
-# 模型路径与下载
-RMBG_MODEL_DIR = os.path.join("models", "rembg")
+# 模型路径与下载 - 指向 ComfyUI 根目录下的 models/rembg
+RMBG_MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "rembg")
 RMBG_MODEL_PATH = os.path.join(RMBG_MODEL_DIR, "RMBG-1.4.pth")
 RMBG_MODEL_URL = "https://huggingface.co/zhengchong/RMBG-1.4/resolve/main/RMBG-1.4.pth"
 
