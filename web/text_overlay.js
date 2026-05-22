@@ -29,10 +29,49 @@ app.registerExtension({
                 node, img: null, loaded: false, loadError: null, imgAspect: null,
                 text: getW("text")?.value ?? "Hello",
                 x: 0.5, y: 0.5, size: 48, rotation: 0, opacity: 1,
-                align: "center", color: "#ffffff", fontPath: "",
+                align: "center", color: "#ffffff",
+                fontPath: getW("font_path")?.value ?? "",
+                fontFamily: "",
                 mode: null, mx0: 0, my0: 0, pos0: null, lastInfo: null,
             };
             node._toState = s;
+
+            // ── Font mapping: label → file path → CSS font-family ──
+            const FONTS = [
+                { label: "自动检测",  path: "",       css: "sans-serif" },
+                { label: "微软雅黑",  path: "C:/Windows/Fonts/msyh.ttc",   css: "'Microsoft YaHei','微软雅黑',sans-serif" },
+                { label: "黑体",      path: "C:/Windows/Fonts/simhei.ttf", css: "'SimHei','黑体',sans-serif" },
+                { label: "宋体",      path: "C:/Windows/Fonts/simsun.ttc", css: "'SimSun','宋体',serif" },
+                { label: "楷体",      path: "C:/Windows/Fonts/simkai.ttf", css: "'KaiTi','楷体',serif" },
+                { label: "仿宋",      path: "C:/Windows/Fonts/fangsong.ttf", css: "'FangSong','仿宋',serif" },
+                { label: "思源黑体",  path: "C:/Windows/Fonts/SourceHanSansSC-Regular.otf", css: "'Source Han Sans SC','思源黑体',sans-serif" },
+                { label: "思源宋体",  path: "C:/Windows/Fonts/SourceHanSerifSC-Regular.otf", css: "'Source Han Serif SC','思源宋体',serif" },
+                { label: "Noto Sans SC",   path: "C:/Windows/Fonts/NotoSansSC-Regular.otf", css: "'Noto Sans SC',sans-serif" },
+                { label: "阿里巴巴普惠体", path: "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf", css: "'Alibaba PuHui Ti','阿里巴巴普惠体',sans-serif" },
+                { label: "得意黑",         path: "C:/Windows/Fonts/SmileySans-Oblique.ttf",   css: "'Smiley Sans','得意黑',sans-serif" },
+                { label: "霞鹜文楷",       path: "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",   css: "'LXGW WenKai','霞鹜文楷',serif" },
+                { label: "站酷快乐体",     path: "C:/Windows/Fonts/ZCOOL_Kuaile.ttf",          css: "'ZCOOL Kuaile','站酷快乐体',sans-serif" },
+                { label: "HarmonyOS Sans", path: "C:/Windows/Fonts/HarmonyOS_Sans_SC_Regular.ttf", css: "'HarmonyOS Sans SC','HarmonyOS Sans',sans-serif" },
+                { label: "MiSans",     path: "C:/Windows/Fonts/MiSans-Regular.ttf",       css: "'MiSans',sans-serif" },
+                { label: "Arial",      path: "C:/Windows/Fonts/arial.ttf",                css: "'Arial',sans-serif" },
+                { label: "Roboto",     path: "C:/Windows/Fonts/Roboto-Regular.ttf",        css: "'Roboto',sans-serif" },
+                { label: "Open Sans",  path: "C:/Windows/Fonts/OpenSans-Regular.ttf",       css: "'Open Sans',sans-serif" },
+                { label: "Montserrat", path: "C:/Windows/Fonts/Montserrat-Regular.ttf",     css: "'Montserrat',sans-serif" },
+                { label: "Poppins",    path: "C:/Windows/Fonts/Poppins-Regular.ttf",        css: "'Poppins',sans-serif" },
+                { label: "Times New Roman", path: "C:/Windows/Fonts/times.ttf",             css: "'Times New Roman',serif" },
+            ];
+
+            // Helper: resolve font path → FONTS entry
+            function fontEntryByPath(path) {
+                if (!path) return FONTS[0];
+                for (const f of FONTS) { if (f.path && path.includes(f.path)) return f; }
+                // Try matching filename
+                const fn = path.split("/").pop().split("\\").pop();
+                for (const f of FONTS) { if (f.path && f.path.includes(fn)) return f; }
+                return FONTS[0];
+            }
+            // Initialize fontFamily from saved path
+            s.fontFamily = fontEntryByPath(s.fontPath).css;
 
             // ── DOM ──
             const root = document.createElement("div");
@@ -111,7 +150,18 @@ app.registerExtension({
             rotVal.textContent = `${Math.round(s.rotation)}°`;
             rotVal.style.cssText = "font-size:9px;font-family:monospace;color:#888;width:24px;text-align:right;flex:none;";
 
+            // ── Font dropdown ──
+            const fontSelect = document.createElement("select");
+            fontSelect.style.cssText = "font-size:11px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#ddd;height:22px;padding:0 4px;flex:none;max-width:120px;";
+            FONTS.forEach((f, i) => {
+                const opt = document.createElement("option");
+                opt.value = i; opt.textContent = f.label;
+                fontSelect.appendChild(opt);
+            });
+            fontSelect.selectedIndex = 0;
+
             bar.appendChild(textInput);
+            bar.appendChild(fontSelect);
             bar.appendChild(sizeLbl);
             bar.appendChild(sizeSlider);
             bar.appendChild(sizeVal);
@@ -129,6 +179,15 @@ app.registerExtension({
                 s.text = textInput.value || " ";
                 const tw = getW("text");
                 if (tw) { tw.value = s.text; if (tw.callback) tw.callback(s.text); }
+                draw();
+            });
+
+            fontSelect.addEventListener("change", () => {
+                const entry = FONTS[parseInt(fontSelect.value)];
+                s.fontPath = entry.path;
+                s.fontFamily = entry.css;
+                const fw = getW("font_path");
+                if (fw) { fw.value = s.fontPath; if (fw.callback) fw.callback(s.fontPath); }
                 draw();
             });
 
@@ -156,17 +215,7 @@ app.registerExtension({
                 return { nx: (cx - info.ox) / info.scX + info.vl, ny: (cy - info.oy) / info.scY + info.vt };
             }
 
-            // ── Drawing ──
-            let _textCache = { text: "", size: 0, width: 0, height: 0 };
-            function measureText(ctx, text, size) {
-                if (_textCache.text === text && _textCache.size === size) return _textCache;
-                const font = `${size}px sans-serif`;
-                ctx.font = font;
-                const m = ctx.measureText(text);
-                const h = size * 1.2;
-                _textCache = { text, size, width: m.width, height: h };
-                return _textCache;
-            }
+            function cssFont(px) { return `${px}px ${s.fontFamily || "sans-serif"}`; }
 
             function draw() {
                 const rect = wrap.getBoundingClientRect();
@@ -226,8 +275,7 @@ app.registerExtension({
 
                 // Text overlay
                 const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
-                const font = `${ts}px sans-serif`;
-                ctx.font = font;
+                ctx.font = cssFont(ts);
                 const tm = ctx.measureText(s.text);
                 const tw = tm.width;
                 const th = ts * 1.2;
@@ -241,7 +289,7 @@ app.registerExtension({
                 ctx.rotate(s.rotation * Math.PI / 180);
 
                 // Text shadow
-                ctx.font = font;
+                ctx.font = cssFont(ts);
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.shadowColor = "rgba(0,0,0,0.7)";
@@ -352,7 +400,7 @@ app.registerExtension({
                 if (!s.lastInfo) return false;
                 const ts = Math.max(8, s.size * (n2c(1, 1, s.lastInfo).x - n2c(0, 0, s.lastInfo).x) / s.img.naturalWidth);
                 const ctx = cv.getContext("2d");
-                ctx.font = `${ts}px sans-serif`;
+                ctx.font = cssFont(ts);
                 const tm = ctx.measureText(s.text);
                 const tw = tm.width, th = ts * 1.2;
                 const tc = n2c(s.x, s.y, s.lastInfo);
@@ -388,7 +436,7 @@ app.registerExtension({
                 const ib = n2c(1, 1, s.lastInfo);
                 const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
                 const ctx = cv.getContext("2d");
-                ctx.font = `${ts}px sans-serif`;
+                ctx.font = cssFont(ts);
                 const tm = ctx.measureText(s.text);
                 return { hw: tm.width / 2 + 4, hh: ts * 1.2 / 2 + 2 };
             }
@@ -629,6 +677,10 @@ app.registerExtension({
                 rotVal.textContent = `${Math.round(st.rotation)}°`;
                 swatch.style.backgroundColor = st.color;
                 ci.value = st.color;
+                st.fontPath = getW("font_path")?.value ?? "";
+                const entry = fontEntryByPath(st.fontPath);
+                st.fontFamily = entry.css;
+                fontSelect.selectedIndex = FONTS.indexOf(entry);
                 setTimeout(() => { retryLoad(20, 300); }, 500);
             };
 

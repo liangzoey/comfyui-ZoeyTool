@@ -41,7 +41,7 @@ class HunyuanTranslatorNode:
                 "文本": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
                 "源语言": (["自动检测", "中文", "英文", "日语", "韩语", "法语", "西班牙语", "俄语", "阿拉伯语", "德语", "葡萄牙语", "意大利语", "泰语", "越南语", "印尼语", "繁体中文", "粤语", "藏语", "维吾尔语", "蒙古语", "哈萨克语"],),
                 "目标语言": (["中文", "英文", "日语", "韩语", "法语", "西班牙语", "俄语", "阿拉伯语", "德语", "葡萄牙语", "意大利语", "泰语", "越南语", "印尼语", "繁体中文", "粤语", "藏语", "维吾尔语", "蒙古语", "哈萨克语"], {"default": "英文"}),
-                "模型版本": (["HY-MT1.5-1.8B", "HY-MT1.5-7B"], {"default": "HY-MT1.5-1.8B"}),
+                "模型版本": (["HY-MT2.0-2B", "HY-MT2.0-7B", "HY-MT2.0-70B", "HY-MT1.5-1.8B", "HY-MT1.5-7B"], {"default": "HY-MT2.0-2B"}),
                 "设备": (["auto", "cuda", "cpu"], {"default": "auto"}),
             },
             "optional": {
@@ -84,6 +84,9 @@ class HunyuanTranslatorNode:
         print(f"[HunyuanTranslator] 当前工作目录: {os.getcwd()}")
         
         hf_model_map = {
+            "HY-MT2.0-2B": "tencent/HY-MT2.0-2B",
+            "HY-MT2.0-7B": "tencent/HY-MT2.0-7B",
+            "HY-MT2.0-70B": "tencent/HY-MT2.0-70B",
             "HY-MT1.5-1.8B": "tencent/HY-MT1.5-1.8B",
             "HY-MT1.5-7B": "tencent/HY-MT1.5-7B"
         }
@@ -233,5 +236,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "HunyuanTranslatorNode": "Zoey - 混元翻译器 (HY-MT1.5)"
+    "HunyuanTranslatorNode": "Zoey - 混元翻译器 (HY-MT1.5/MT2.0)"
 }
