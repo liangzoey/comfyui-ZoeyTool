@@ -291,6 +291,32 @@ app.registerExtension({
 
                 ctx.restore();
 
+                // Corner resize handles (bottom-right corner)
+                const hs = 8;
+                const corners = [
+                    { dx: -tw/2 - 4, dy: -th/2 - 2, id: "tl" },
+                    { dx: tw/2 + 4, dy: -th/2 - 2, id: "tr" },
+                    { dx: tw/2 + 4, dy: th/2 + 2, id: "br" },
+                    { dx: -tw/2 - 4, dy: th/2 + 2, id: "bl" },
+                ];
+                s._resizeHandles = [];
+                corners.forEach(c => {
+                    const wx = tc.x + c.dx * cosR - c.dy * sinR;
+                    const wy = tc.y + c.dx * sinR + c.dy * cosR;
+                    s._resizeHandles.push({ x: wx, y: wy, id: c.id });
+                    ctx.save();
+                    ctx.translate(wx, wy);
+                    ctx.rotate(s.rotation * Math.PI / 180); // keep handles axis-aligned in text space
+                    ctx.fillStyle = c.id === "br" ? "#4fc3f7" : "rgba(255,255,255,0.6)";
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.rect(-hs/2, -hs/2, hs, hs);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                });
+
                 // Info
                 ctx.fillStyle = "rgba(255,255,255,0.4)";
                 ctx.font = "10px sans-serif";
@@ -345,10 +371,44 @@ app.registerExtension({
                 return Math.sqrt(dx * dx + dy * dy) < 12;
             }
 
+            function hitResizeHandle(mx, my) {
+                if (!s._resizeHandles) return -1;
+                for (let i = 0; i < s._resizeHandles.length; i++) {
+                    const dx = mx - s._resizeHandles[i].x;
+                    const dy = my - s._resizeHandles[i].y;
+                    if (Math.sqrt(dx * dx + dy * dy) < 10) return i;
+                }
+                return -1;
+            }
+
+            // Get text bounding box half-dimensions in canvas pixels (at current state)
+            function getTextHalfDims() {
+                if (!s.lastInfo || !s.img) return { hw: 1, hh: 1 };
+                const it = n2c(0, 0, s.lastInfo);
+                const ib = n2c(1, 1, s.lastInfo);
+                const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
+                const ctx = cv.getContext("2d");
+                ctx.font = `${ts}px sans-serif`;
+                const tm = ctx.measureText(s.text);
+                return { hw: tm.width / 2 + 4, hh: ts * 1.2 / 2 + 2 };
+            }
+
             // ── Interaction ──
             cv.addEventListener("mousedown", (e) => {
                 const rect = cv.getBoundingClientRect();
                 const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+
+                const rIdx = hitResizeHandle(mx, my);
+                if (rIdx >= 0) {
+                    s.mode = "resize";
+                    s.resizeCorner = s._resizeHandles[rIdx].id;
+                    s.mx0 = mx; s.my0 = my;
+                    s.pos0 = { size: s.size, x: s.x, y: s.y, rotation: s.rotation };
+                    const hd = getTextHalfDims();
+                    s._resizeHalfDims = hd;
+                    e.preventDefault();
+                    return;
+                }
 
                 if (hitRotHandle(mx, my)) {
                     s.mode = "rotate";
@@ -372,7 +432,8 @@ app.registerExtension({
                 const mx = e.clientX - rect.left, my = e.clientY - rect.top;
 
                 if (!s.mode) {
-                    cv.style.cursor = hitText(mx, my) ? "grab" : hitRotHandle(mx, my) ? "crosshair" : "default";
+                    const onRS = hitResizeHandle(mx, my) >= 0;
+                    cv.style.cursor = onRS ? "nwse-resize" : hitText(mx, my) ? "grab" : hitRotHandle(mx, my) ? "crosshair" : "default";
                     return;
                 }
                 if (!s.lastInfo) return;
@@ -401,6 +462,32 @@ app.registerExtension({
                     s.x = Math.max(0.05, Math.min(0.95, s.x));
                     s.y = Math.max(0.05, Math.min(0.95, s.y));
                     syncW(); draw(); e.preventDefault();
+                }
+
+                if (s.mode === "resize") {
+                    if (!s.lastInfo || !s.img) return;
+                    const tc = n2c(s.pos0.x, s.pos0.y, s.lastInfo);
+                    const rad = (s.pos0.rotation ?? s.rotation) * Math.PI / 180;
+                    const cosR = Math.cos(rad), sinR = Math.sin(rad);
+                    // Mouse position in text-local coords
+                    const dx = mx - tc.x;
+                    const dy = my - tc.y;
+                    const lx = dx * cosR + dy * sinR;
+                    const ly = -dx * sinR + dy * cosR;
+                    // Use the larger axis ratio
+                    const hw = s._resizeHalfDims?.hw ?? 1;
+                    const hh = s._resizeHalfDims?.hh ?? 1;
+                    const scaleX = Math.abs(lx) / hw;
+                    const scaleY = Math.abs(ly) / hh;
+                    const scale = Math.max(0.3, Math.min(10, (scaleX + scaleY) / 2));
+                    const newSize = Math.round(Math.max(8, s.pos0.size * scale));
+                    if (newSize !== s.size) {
+                        s.size = newSize;
+                        sizeSlider.value = s.size;
+                        sizeVal.textContent = `${s.size}`;
+                        syncW(); draw();
+                    }
+                    e.preventDefault();
                 }
             };
 
