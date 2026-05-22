@@ -225,7 +225,7 @@ app.registerExtension({
                 ctx.drawImage(s.img, it.x, it.y, ib.x - it.x, ib.y - it.y);
 
                 // Text overlay
-                const ts = Math.max(8, s.size * (ib.x - it.x));
+                const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
                 const font = `${ts}px sans-serif`;
                 ctx.font = font;
                 const tm = ctx.measureText(s.text);
@@ -324,7 +324,7 @@ app.registerExtension({
             // ── Hit testing ──
             function hitText(mx, my) {
                 if (!s.lastInfo) return false;
-                const ts = Math.max(8, s.size * (n2c(1, 1, s.lastInfo).x - n2c(0, 0, s.lastInfo).x));
+                const ts = Math.max(8, s.size * (n2c(1, 1, s.lastInfo).x - n2c(0, 0, s.lastInfo).x) / s.img.naturalWidth);
                 const ctx = cv.getContext("2d");
                 ctx.font = `${ts}px sans-serif`;
                 const tm = ctx.measureText(s.text);
