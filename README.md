@@ -31,6 +31,8 @@ pip install -r requirements.txt
 | **Batch Image Cropper** | Batch crop images (left/right/top/bottom), overwrite mode, filename preservation |
 | **Multi-function Image Editor** | Flip, rotate, split, edge detect, blur, sharpen, threshold, color invert, grayscale, perspective warp, blend, stylize |
 | **Image Edit Prompt Generator** | Auto-generate edit prompts for text/object/style/background editing, virtual try-on, object add/remove |
+| **Frame Crop/Outpaint** | Interactive frame-based cropping and outpainting with fill color, real-time canvas preview |
+| **Multi-layer Canvas** | 5-layer image compositing with drag reposition, scroll scale, rotation handle, and horizontal/vertical flip |
 
 #### 🎥 Video Processing
 
@@ -106,6 +108,8 @@ pip install -r requirements.txt
 | **图像批量裁剪器** | 批量裁剪图片（左/右/上/下自由裁剪），覆盖模式，保留原文件名 |
 | **多功能图像编辑器** | 翻转、旋转、分割、边缘检测、模糊、锐化、二值化、颜色反转、灰度化、透视变换、融合、风格化 |
 | **图像编辑提示词生成器** | 自动生成编辑提示词，支持文字/对象/风格/背景编辑、虚拟试穿、对象添加/移除 |
+| **框选裁剪/外扩** | 交互式框选裁剪与画布外扩，实时预览，自定义填充色 |
+| **多功能画布** | 5 层图像叠加合成，拖拽移动、滚轮缩放、旋转手柄、水平/垂直翻转 |
 
 #### 🎥 视频处理
 
