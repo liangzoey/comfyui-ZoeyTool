@@ -8,12 +8,83 @@ import os
 def _find_font(preferred=""):
     candidates = [
         preferred,
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/arial.ttf",
+        # ── Windows 预装（免费商用） ──
+        "C:/Windows/Fonts/msyh.ttc",          # 微软雅黑
+        "C:/Windows/Fonts/msyhbd.ttc",        # 微软雅黑粗体
+        "C:/Windows/Fonts/msyhl.ttc",         # 微软雅黑细体
+        "C:/Windows/Fonts/simhei.ttf",        # 黑体
+        "C:/Windows/Fonts/simsun.ttc",        # 宋体
+        "C:/Windows/Fonts/simkai.ttf",        # 楷体
+        "C:/Windows/Fonts/fangsong.ttf",      # 仿宋
+        "C:/Windows/Fonts/arial.ttf",         # Arial
+        "C:/Windows/Fonts/arialbd.ttf",       # Arial Bold
+        "C:/Windows/Fonts/times.ttf",         # Times New Roman
+        # ── 思源系列（Adobe + Google，SIL OFL 免费商用） ──
+        "C:/Windows/Fonts/SourceHanSansSC-Regular.otf",
+        "C:/Windows/Fonts/SourceHanSansSC-Bold.otf",
+        "C:/Windows/Fonts/SourceHanSansSC-Medium.otf",
+        "C:/Windows/Fonts/SourceHanSansSC-Light.otf",
+        "C:/Windows/Fonts/SourceHanSerifSC-Regular.otf",
+        "C:/Windows/Fonts/SourceHanSerifSC-Bold.otf",
+        # ── Noto Sans/Serif SC（Google，SIL OFL 免费商用） ──
+        "C:/Windows/Fonts/NotoSansSC-Regular.otf",
+        "C:/Windows/Fonts/NotoSansSC-Bold.otf",
+        "C:/Windows/Fonts/NotoSerifSC-Regular.otf",
+        "C:/Windows/Fonts/NotoSerifSC-Bold.otf",
+        # ── 阿里巴巴普惠体（免费商用） ──
+        "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf",
+        "C:/Windows/Fonts/AlibabaPuHuiTi-Bold.ttf",
+        "C:/Windows/Fonts/AlibabaPuHuiTi-Medium.ttf",
+        "C:/Windows/Fonts/AlibabaPuHuiTi-Light.ttf",
+        # ── 得意黑 / Smiley Sans（免费商用） ──
+        "C:/Windows/Fonts/SmileySans-Oblique.ttf",
+        "C:/Windows/Fonts/SmileySans-Oblique.otf",
+        # ── 霞鹜文楷（免费商用） ──
+        "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",
+        "C:/Windows/Fonts/LXGWWenKai-Bold.ttf",
+        "C:/Windows/Fonts/LXGWWenKai-Light.ttf",
+        # ── 站酷系列（免费商用） ──
+        "C:/Windows/Fonts/ZCOOL_QingKeHuangYou.ttf",
+        "C:/Windows/Fonts/ZCOOL_Kuaile.ttf",
+        "C:/Windows/Fonts/ZCOOL_XiaoWei.ttf",
+        # ── 庞门正道标题体（免费商用） ──
+        "C:/Windows/Fonts/PangMenZhengDaoBiaoTi.ttf",
+        "C:/Windows/Fonts/PangMenZhengDaoBiaoTi.otf",
+        # ── HarmonyOS Sans（华为，免费商用） ──
+        "C:/Windows/Fonts/HarmonyOS_Sans_SC_Regular.ttf",
+        "C:/Windows/Fonts/HarmonyOS_Sans_SC_Bold.ttf",
+        # ── MiSans（小米，免费商用） ──
+        "C:/Windows/Fonts/MiSans-Regular.ttf",
+        "C:/Windows/Fonts/MiSans-Bold.ttf",
+        # ── OPPO Sans（免费商用） ──
+        "C:/Windows/Fonts/OPPOSans-Regular.ttf",
+        "C:/Windows/Fonts/OPPOSans-Bold.ttf",
+        # ── 英文免费商用字体 ──
+        "C:/Windows/Fonts/Roboto-Regular.ttf",
+        "C:/Windows/Fonts/Roboto-Bold.ttf",
+        "C:/Windows/Fonts/OpenSans-Regular.ttf",
+        "C:/Windows/Fonts/OpenSans-Bold.ttf",
+        "C:/Windows/Fonts/Montserrat-Regular.ttf",
+        "C:/Windows/Fonts/Montserrat-Bold.ttf",
+        "C:/Windows/Fonts/Poppins-Regular.ttf",
+        "C:/Windows/Fonts/Poppins-Bold.ttf",
+        "C:/Windows/Fonts/Lato-Regular.ttf",
+        "C:/Windows/Fonts/Lato-Bold.ttf",
+        "C:/Windows/Fonts/NotoSans-Regular.ttf",
+        "C:/Windows/Fonts/NotoSans-Bold.ttf",
+        # ── macOS 预装 ──
         "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/NotoSansCJK-Regular.ttc",
+        # ── Linux 常见路径 ──
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",         # 文泉驿正黑
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",       # 文泉驿微米黑
     ]
     for p in candidates:
         if p and os.path.exists(p):
