@@ -24,7 +24,7 @@ app.registerExtension({
             const getW = (name) => node.widgets?.find(w => w.name === name);
 
             // ── Hide raw widgets ──
-            ["frame_left", "frame_top", "frame_right", "frame_bottom", "填充颜色", "fill_mode"].forEach(name => {
+            ["frame_left", "frame_top", "frame_right", "frame_bottom", "填充颜色", "fill_mode", "feather"].forEach(name => {
                 const w = getW(name);
                 if (w) {
                     w.computeSize = () => [0, 0];
@@ -44,6 +44,7 @@ app.registerExtension({
                 fb: getW("frame_bottom")?.value ?? 1.1,
                 fill: getW("填充颜色")?.value ?? "#808080",
                 fillMode: getW("fill_mode")?.value ?? true,
+                feather: getW("feather")?.value ?? 0,
                 mode: null, mx0: 0, my0: 0, frame0: null, lastInfo: null, _hits: null,
             };
             node._opState = s;
@@ -113,8 +114,31 @@ app.registerExtension({
             function updateDimLabel() {
                 const w = s.fr - s.fl;
                 const h = s.fb - s.ft;
-                dimLabel.textContent = `${w.toFixed(2)}×${h.toFixed(2)}  (${(w/h).toFixed(2)}:1)`;
+                dimLabel.textContent = `${w.toFixed(2)}×${h.toFixed(2)} (${(w/h).toFixed(2)}:1)`;
             }
+
+            // ── Feather control ──
+            const featherLbl = document.createElement("span");
+            featherLbl.textContent = "羽化";
+            featherLbl.style.cssText = "font-size:9px;color:#888;margin-left:4px;flex:none;";
+
+            const featherVal = document.createElement("span");
+            featherVal.textContent = `${s.feather}px`;
+            featherVal.style.cssText = "font-size:10px;font-family:monospace;color:#aaa;width:30px;text-align:right;flex:none;";
+
+            const featherSlider = document.createElement("input");
+            featherSlider.type = "range";
+            featherSlider.min = 0; featherSlider.max = 200; featherSlider.value = s.feather;
+            featherSlider.style.cssText = "width:52px;height:14px;cursor:pointer;flex:none;";
+            featherSlider.title = "边缘羽化像素值";
+
+            featherSlider.addEventListener("input", () => {
+                s.feather = parseInt(featherSlider.value);
+                featherVal.textContent = `${s.feather}px`;
+                const fw = getW("feather");
+                if (fw) { fw.value = s.feather; if (fw.callback) fw.callback(s.feather); }
+                draw();
+            });
 
             bar.appendChild(reloadBtn);
             bar.appendChild(fitBtn);
@@ -123,6 +147,9 @@ app.registerExtension({
             bar.appendChild(hexLbl);
             bar.appendChild(ci);
             bar.appendChild(dimLabel);
+            bar.appendChild(featherLbl);
+            bar.appendChild(featherSlider);
+            bar.appendChild(featherVal);
             root.appendChild(bar);
 
             // ── Button events ──
@@ -278,6 +305,28 @@ app.registerExtension({
                 ctx.setLineDash([6, 4]);
                 ctx.strokeRect(ft.x, ft.y, fw, fh);
                 ctx.setLineDash([]);
+
+                // Feather indicator: gradient ring at frame boundary
+                if (s.feather > 0 && s.lastInfo) {
+                    const featherNorm = s.feather / (s.img?.naturalWidth || 1);
+                    const featherPixels = Math.abs(n2c(s.fl + featherNorm, 0, s.lastInfo).x - ft.x);
+                    if (featherPixels > 1) {
+                        const grad = ctx.createRadialGradient(
+                            ft.x + fw / 2, ft.y + fh / 2, Math.max(fw, fh) / 2 - featherPixels,
+                            ft.x + fw / 2, ft.y + fh / 2, Math.max(fw, fh) / 2
+                        );
+                        grad.addColorStop(0, "rgba(79,195,247,0)");
+                        grad.addColorStop(1, "rgba(79,195,247,0.15)");
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(ft.x, ft.y, fw, fh);
+                        ctx.rect(ft.x + featherPixels, ft.y + featherPixels, fw - featherPixels * 2, fh - featherPixels * 2);
+                        ctx.closePath();
+                        ctx.fillStyle = grad;
+                        ctx.fill("evenodd");
+                        ctx.restore();
+                    }
+                }
 
                 // Handles
                 const hs = 11;
@@ -492,6 +541,7 @@ app.registerExtension({
                 st.fb = getW("frame_bottom")?.value ?? st.fb;
                 st.fill = getW("填充颜色")?.value ?? st.fill;
                 st.fillMode = getW("fill_mode")?.value ?? st.fillMode;
+                st.feather = getW("feather")?.value ?? st.feather;
                 if (!st.fillMode) {
                     st.fl = Math.max(0, Math.min(1, st.fl));
                     st.ft = Math.max(0, Math.min(1, st.ft));
@@ -505,6 +555,12 @@ app.registerExtension({
                 fillBtn.title = st.fillMode ? "裁剪模式：开启后图像尺寸不变，裁剪区域自动填充颜色" : "裁剪模式：关闭后只裁剪不外扩不填充";
                 swatch.style.backgroundColor = st.fill;
                 hexLbl.textContent = st.fill.toUpperCase();
+                // Restore feather
+                if (getW("feather")) {
+                    st.feather = getW("feather").value;
+                    featherSlider.value = st.feather;
+                    featherVal.textContent = `${st.feather}px`;
+                }
                 setTimeout(() => { setWrapHeight(); retryLoad(20, 300); }, 500);
             };
 

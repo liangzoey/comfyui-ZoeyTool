@@ -13,6 +13,30 @@ def parse_hex_color(hex_str):
         return 0.5, 0.5, 0.5
 
 
+def make_feather_mask(h, w, feather, device, dtype):
+    """Create a distance-to-edge alpha mask for feathering."""
+    if feather <= 0:
+        return None
+    y = torch.arange(h, device=device, dtype=dtype)
+    x = torch.arange(w, device=device, dtype=dtype)
+    dist = torch.minimum(
+        torch.minimum(y[:, None], (h - 1 - y)[:, None]),
+        torch.minimum(x[None, :], (w - 1 - x)[None, :]),
+    )
+    alpha = torch.clamp(dist / feather, 0, 1)
+    return alpha[None, :, :, None]  # (1, h, w, 1)
+
+
+def blend_feather(dst, src, feather, dst_y1, dst_x1, h, w):
+    """Blend src into dst with feather at edges."""
+    if feather <= 0:
+        dst[:, dst_y1:dst_y1 + h, dst_x1:dst_x1 + w, :] = src
+        return
+    alpha = make_feather_mask(h, w, feather, dst.device, dst.dtype)
+    dst_part = dst[:, dst_y1:dst_y1 + h, dst_x1:dst_x1 + w, :]
+    dst[:, dst_y1:dst_y1 + h, dst_x1:dst_x1 + w, :] = src * alpha + dst_part * (1 - alpha)
+
+
 class ZoeyOutpaintFrame:
     """外扩画布框架 - 通过拖拽交互控制画布外扩/裁剪"""
     @classmethod
@@ -26,6 +50,7 @@ class ZoeyOutpaintFrame:
                 "frame_bottom": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 5.0, "step": 0.001}),
                 "填充颜色": ("STRING", {"multiline": False, "default": "#808080"}),
                 "fill_mode": ("BOOLEAN", {"default": True}),
+                "feather": ("INT", {"default": 0, "min": 0, "max": 200, "step": 1}),
             }
         }
 
@@ -35,7 +60,7 @@ class ZoeyOutpaintFrame:
     CATEGORY = "Zoey Tool/图像处理"
     OUTPUT_NODE = True
 
-    def outpaint(self, image, frame_left, frame_top, frame_right, frame_bottom, 填充颜色, fill_mode=True):
+    def outpaint(self, image, frame_left, frame_top, frame_right, frame_bottom, 填充颜色, fill_mode=True, feather=0):
         fill_rgb = parse_hex_color(填充颜色)
         B, H, W, C = image.shape
         l = int(round(frame_left * W))
@@ -43,13 +68,19 @@ class ZoeyOutpaintFrame:
         r = int(round(frame_right * W))
         b = int(round(frame_bottom * H))
 
+        fw = r - l
+        fh = b - t
+
         # 填充模式 + 框在图像内部 → 输出完整图像尺寸，框外填充颜色
         if fill_mode and l >= 0 and t >= 0 and r <= W and b <= H:
             out = torch.empty((B, H, W, 3), dtype=image.dtype, device=image.device)
             out[:, :, :, 0] = fill_rgb[0]
             out[:, :, :, 1] = fill_rgb[1]
             out[:, :, :, 2] = fill_rgb[2]
-            out[:, t:b, l:r, :] = image[:, t:b, l:r, :3]
+            if feather > 0:
+                blend_feather(out, image[:, t:b, l:r, :3], feather, t, l, fh, fw)
+            else:
+                out[:, t:b, l:r, :] = image[:, t:b, l:r, :3]
             return (out,)
 
         out_w = r - l
@@ -70,10 +101,10 @@ class ZoeyOutpaintFrame:
         dst_y1 = max(0, -t)
 
         if src_x2 > src_x1 and src_y2 > src_y1:
-            src_h = src_y2 - src_y1
-            src_w = src_x2 - src_x1
-            out[:, dst_y1:dst_y1 + src_h, dst_x1:dst_x1 + src_w, :] = \
-                image[:, src_y1:src_y2, src_x1:src_x2, :3]
+            sh = src_y2 - src_y1
+            sw = src_x2 - src_x1
+            src_part = image[:, src_y1:src_y2, src_x1:src_x2, :3]
+            blend_feather(out, src_part, feather, dst_y1, dst_x1, sh, sw)
 
         return (out,)
 
