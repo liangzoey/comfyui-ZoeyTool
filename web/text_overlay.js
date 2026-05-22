@@ -514,39 +514,44 @@ app.registerExtension({
 
                 if (s.mode === "resize") {
                     if (!s.lastInfo || !s.img) return;
-                    const tc = n2c(s.pos0.x, s.pos0.y, s.lastInfo);
-                    const rad = (s.pos0.rotation ?? s.rotation) * Math.PI / 180;
-                    const cosR = Math.cos(rad), sinR = Math.sin(rad);
-                    // Mouse position in text-local coords
-                    const dx = mx - tc.x;
-                    const dy = my - tc.y;
-                    const lx = dx * cosR + dy * sinR;
-                    const ly = -dx * sinR + dy * cosR;
-                    // Use the larger axis ratio
-                    const hw = s._resizeHalfDims?.hw ?? 1;
-                    const hh = s._resizeHalfDims?.hh ?? 1;
-                    const scaleX = Math.abs(lx) / hw;
-                    const scaleY = Math.abs(ly) / hh;
-                    const scale = Math.max(0.3, Math.min(10, (scaleX + scaleY) / 2));
-                    const newSize = Math.round(Math.max(8, s.pos0.size * scale));
-                    if (newSize !== s.size) {
-                        s.size = newSize;
-                        sizeSlider.value = s.size;
-                        sizeVal.textContent = `${s.size}`;
-                        syncW(); draw();
-                    }
+                    try {
+                        const tc = n2c(s.pos0.x, s.pos0.y, s.lastInfo);
+                        const rad = (s.pos0.rotation ?? s.rotation) * Math.PI / 180;
+                        const cosR = Math.cos(rad), sinR = Math.sin(rad);
+                        const dx = mx - tc.x;
+                        const dy = my - tc.y;
+                        const lx = dx * cosR + dy * sinR;
+                        const ly = -dx * sinR + dy * cosR;
+                        const hw = s._resizeHalfDims?.hw ?? 1;
+                        const hh = s._resizeHalfDims?.hh ?? 1;
+                        // 使用中心到鼠标的距离比例缩放（比轴平均更稳定）
+                        const dist = Math.sqrt(lx * lx + ly * ly);
+                        const origDist = Math.sqrt(hw * hw + hh * hh);
+                        const scale = Math.max(0.15, Math.min(20, dist / origDist));
+                        const newSize = Math.round(Math.max(8, Math.min(500, s.pos0.size * scale)));
+                        if (newSize !== s.size) {
+                            s.size = newSize;
+                            sizeSlider.value = s.size;
+                            sizeVal.textContent = `${s.size}`;
+                            syncW(); draw();
+                        }
+                    } catch (e) { console.warn("resize error", e); }
                     e.preventDefault();
                 }
             };
 
-            const onMU = () => {
+            const onMU = (e) => {
                 if (s.mode) {
                     s.mode = null;
                     cv.style.cursor = "default";
+                    syncW();
                 }
             };
+            // 鼠标离开窗口也释放模式，防止卡住
+            const onMMLeave = () => { if (s.mode) { s.mode = null; cv.style.cursor = "default"; } };
             window.addEventListener("mousemove", onMM);
             window.addEventListener("mouseup", onMU);
+            window.addEventListener("blur", onMMLeave);
 
             // ── Image loading ──
             function loadImage(url) {
@@ -719,6 +724,7 @@ app.registerExtension({
                 ro.disconnect();
                 window.removeEventListener("mousemove", onMM);
                 window.removeEventListener("mouseup", onMU);
+                window.removeEventListener("blur", onMMLeave);
                 if (rt) cancelAnimationFrame(rt);
                 this._toState = null;
                 if (origRM) origRM.apply(this, arguments);

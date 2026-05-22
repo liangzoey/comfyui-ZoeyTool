@@ -170,8 +170,14 @@ class ZoeyTextOverlay:
             if rot != 0:
                 text_layer = text_layer.rotate(rot, expand=True, center=(text_layer.width // 2, text_layer.height // 2),
                                                 fillcolor=(0, 0, 0, 0))
+                # 旋转后重新居中，确保文字中心保持在 (ox*W, oy*H)
+                paste_x = int(ox * W - text_layer.width / 2)
+                paste_y = int(oy * H - text_layer.height / 2)
+            else:
+                paste_x = px - 4
+                paste_y = py - 4
 
-            overlay.paste(text_layer, (px - 4, py - 4), text_layer)
+            overlay.paste(text_layer, (paste_x, paste_y), text_layer)
             result = Image.alpha_composite(pil, overlay).convert("RGB")
             result_t = torch.from_numpy(np.array(result).astype(np.float32) / 255.0)
             results.append(result_t)
