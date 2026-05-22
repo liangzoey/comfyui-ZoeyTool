@@ -39,19 +39,19 @@ app.registerExtension({
             // ── Font mapping: label → file path → CSS font-family ──
             const FONTS = [
                 { label: "自动检测",  path: "",       css: "sans-serif" },
-                { label: "微软雅黑",  path: "C:/Windows/Fonts/msyh.ttc",   css: "'Microsoft YaHei','微软雅黑',sans-serif" },
-                { label: "黑体",      path: "C:/Windows/Fonts/simhei.ttf", css: "'SimHei','黑体',sans-serif" },
-                { label: "宋体",      path: "C:/Windows/Fonts/simsun.ttc", css: "'SimSun','宋体',serif" },
-                { label: "楷体",      path: "C:/Windows/Fonts/simkai.ttf", css: "'KaiTi','楷体',serif" },
-                { label: "仿宋",      path: "C:/Windows/Fonts/fangsong.ttf", css: "'FangSong','仿宋',serif" },
-                { label: "思源黑体",  path: "C:/Windows/Fonts/SourceHanSansSC-Regular.otf", css: "'Source Han Sans SC','思源黑体',sans-serif" },
-                { label: "思源宋体",  path: "C:/Windows/Fonts/SourceHanSerifSC-Regular.otf", css: "'Source Han Serif SC','思源宋体',serif" },
+                { label: "微软雅黑",  path: "C:/Windows/Fonts/msyh.ttc",   css: "'Microsoft YaHei',sans-serif" },
+                { label: "黑体",      path: "C:/Windows/Fonts/simhei.ttf", css: "'SimHei',sans-serif" },
+                { label: "宋体",      path: "C:/Windows/Fonts/simsun.ttc", css: "'SimSun',serif" },
+                { label: "楷体",      path: "C:/Windows/Fonts/simkai.ttf", css: "'KaiTi',serif" },
+                { label: "仿宋",      path: "C:/Windows/Fonts/fangsong.ttf", css: "'FangSong',serif" },
+                { label: "思源黑体",  path: "C:/Windows/Fonts/SourceHanSansSC-Regular.otf", css: "'Source Han Sans SC',sans-serif" },
+                { label: "思源宋体",  path: "C:/Windows/Fonts/SourceHanSerifSC-Regular.otf", css: "'Source Han Serif SC',serif" },
                 { label: "Noto Sans SC",   path: "C:/Windows/Fonts/NotoSansSC-Regular.otf", css: "'Noto Sans SC',sans-serif" },
-                { label: "阿里巴巴普惠体", path: "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf", css: "'Alibaba PuHui Ti','阿里巴巴普惠体',sans-serif" },
-                { label: "得意黑",         path: "C:/Windows/Fonts/SmileySans-Oblique.ttf",   css: "'Smiley Sans','得意黑',sans-serif" },
-                { label: "霞鹜文楷",       path: "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",   css: "'LXGW WenKai','霞鹜文楷',serif" },
-                { label: "站酷快乐体",     path: "C:/Windows/Fonts/ZCOOL_Kuaile.ttf",          css: "'ZCOOL Kuaile','站酷快乐体',sans-serif" },
-                { label: "HarmonyOS Sans", path: "C:/Windows/Fonts/HarmonyOS_Sans_SC_Regular.ttf", css: "'HarmonyOS Sans SC','HarmonyOS Sans',sans-serif" },
+                { label: "阿里巴巴普惠体", path: "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf", css: "'Alibaba PuHui Ti',sans-serif" },
+                { label: "得意黑",         path: "C:/Windows/Fonts/SmileySans-Oblique.ttf",   css: "'Smiley Sans',sans-serif" },
+                { label: "霞鹜文楷",       path: "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",   css: "'LXGW WenKai',serif" },
+                { label: "站酷快乐体",     path: "C:/Windows/Fonts/ZCOOL_Kuaile.ttf",          css: "'ZCOOL Kuaile',sans-serif" },
+                { label: "HarmonyOS Sans", path: "C:/Windows/Fonts/HarmonyOS_Sans_SC_Regular.ttf", css: "'HarmonyOS Sans SC',sans-serif" },
                 { label: "MiSans",     path: "C:/Windows/Fonts/MiSans-Regular.ttf",       css: "'MiSans',sans-serif" },
                 { label: "Arial",      path: "C:/Windows/Fonts/arial.ttf",                css: "'Arial',sans-serif" },
                 { label: "Roboto",     path: "C:/Windows/Fonts/Roboto-Regular.ttf",        css: "'Roboto',sans-serif" },
@@ -215,7 +215,7 @@ app.registerExtension({
                 return { nx: (cx - info.ox) / info.scX + info.vl, ny: (cy - info.oy) / info.scY + info.vt };
             }
 
-            function cssFont(px) { return `${px}px ${s.fontFamily || "sans-serif"}`; }
+            function cssFont(px) { return `${px}px sans-serif`; }
 
             function draw() {
                 const rect = wrap.getBoundingClientRect();
