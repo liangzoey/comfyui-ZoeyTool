@@ -133,7 +133,7 @@ class ZoeyTextOverlay:
             size = int(cfg.get("size", 48))
             ox = float(cfg.get("x", 0.5))
             oy = float(cfg.get("y", 0.5))
-            rot = float(cfg.get("r", 0))
+            rot = -float(cfg.get("r", 0))  # 取反：Canvas顺时针→PIL逆时针
             opacity = max(0, min(1, float(cfg.get("o", 1))))
             align = cfg.get("align", "center")
             hex_color = cfg.get("color", "#ffffff")
