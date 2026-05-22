@@ -149,7 +149,7 @@ class ZoeyTextOverlay:
                 fr, fg, fb = 255, 255, 255
 
             fa = int(opacity * 255)
-            fill_color = (fr, fg, fb, fa)
+            fill_color = (fr, fg, fb, 255)  # 文字用完全不透明绘制，透明度通过 alpha 通道控制
 
             try:
                 font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default()
@@ -170,7 +170,7 @@ class ZoeyTextOverlay:
             if rot != 0:
                 text_layer = text_layer.rotate(rot, expand=True, center=(text_layer.width // 2, text_layer.height // 2),
                                                 fillcolor=(0, 0, 0, 0))
-                # 旋转后重新居中，确保文字中心保持在 (ox*W, oy*H)
+                # 旋转后重新居中
                 paste_x = int(ox * W - text_layer.width / 2)
                 paste_y = int(oy * H - text_layer.height / 2)
             else:
@@ -178,6 +178,13 @@ class ZoeyTextOverlay:
                 paste_y = py - 4
 
             overlay.paste(text_layer, (paste_x, paste_y), text_layer)
+
+            # 透明度通过 overlay alpha 通道单次控制，避免双重叠加
+            if opacity < 1:
+                r, g, b, a = overlay.split()
+                a = a.point(lambda x: int(x * opacity))
+                overlay = Image.merge("RGBA", (r, g, b, a))
+
             result = Image.alpha_composite(pil, overlay).convert("RGB")
             result_t = torch.from_numpy(np.array(result).astype(np.float32) / 255.0)
             results.append(result_t)
