@@ -69,8 +69,8 @@ class ZoeyMultiCanvas:
         dtype = layers[0]["img"].dtype
         device = layers[0]["img"].device
 
-        # Process all visible layers through flip -> scale -> rotate
-        processed = []
+        result = torch.zeros((B, baseH, baseW, C), dtype=dtype, device=device)
+
         for layer in layers:
             if not layer["visible"]:
                 continue
@@ -101,7 +101,7 @@ class ZoeyMultiCanvas:
             else:
                 cur = img
 
-            # 3. Rotation
+            # 3. Rotation (fixed: rot90 for 90° multiples, proper affine for others)
             if rot != 0:
                 if abs(rot) % 90 == 0:
                     k = int(round(rot / 90)) % 4
@@ -135,18 +135,9 @@ class ZoeyMultiCanvas:
                     cur = rotated.permute(0, 2, 3, 1)
                     newH, newW = rotH, rotW
 
-            processed.append((cur, newH, newW, layer["ox"], layer["oy"], layer["opacity"]))
-
-        if not processed:
-            return (image1,)
-
-        # First visible layer defines the canvas size (expands if rotated)
-        baseH, baseW = processed[0][1], processed[0][2]
-        result = torch.zeros((B, baseH, baseW, C), dtype=dtype, device=device)
-
-        for cur, newH, newW, ox, oy, op in processed:
-            cx = baseW // 2 + int(ox * baseW)
-            cy = baseH // 2 + int(oy * baseH)
+            # 4. Position and composite onto fixed canvas
+            cx = baseW // 2 + int(layer["ox"] * baseW)
+            cy = baseH // 2 + int(layer["oy"] * baseH)
 
             x1 = cx - newW // 2
             y1 = cy - newH // 2
@@ -169,6 +160,7 @@ class ZoeyMultiCanvas:
 
             src_part = cur[:, src_y1:src_y2, src_x1:src_x2, :]
             dst_part = result[:, dst_y1:dst_y2, dst_x1:dst_x2, :]
+            op = layer["opacity"]
 
             result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
                 src_part * op + dst_part * (1 - op)
