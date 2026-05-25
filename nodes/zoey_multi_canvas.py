@@ -120,7 +120,7 @@ class ZoeyMultiCanvas:
                     pad_b = max(0, rotH - newH - pad_t)
 
                     img_p = cur.permute(0, 3, 1, 2).contiguous()
-                    img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="constant", value=0)
+                    img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="replicate")
 
                     cos_θ = math.cos(theta_rad)
                     sin_θ = math.sin(theta_rad)
@@ -131,7 +131,7 @@ class ZoeyMultiCanvas:
                     ]], dtype=cur.dtype, device=cur.device).repeat(B, 1, 1)
 
                     grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
-                    rotated = F.grid_sample(img_p, grid, mode="bilinear", align_corners=False)
+                    rotated = F.grid_sample(img_p, grid, mode="bilinear", padding_mode="border", align_corners=False)
                     cur = rotated.permute(0, 2, 3, 1)
                     newH, newW = rotH, rotW
 
