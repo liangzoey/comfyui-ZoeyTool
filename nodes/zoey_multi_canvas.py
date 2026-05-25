@@ -110,7 +110,7 @@ class ZoeyMultiCanvas:
                     cur = torch.rot90(cur, k=k, dims=[1, 2])
                     newH, newW = cur.shape[1], cur.shape[2]
                 else:
-                    theta_rad = math.radians(-rot)
+                    theta_rad = math.radians(rot)
                     cos_t = abs(math.cos(theta_rad))
                     sin_t = abs(math.sin(theta_rad))
                     rotW = int(newW * cos_t + newH * sin_t + 0.5)
