@@ -106,34 +106,38 @@ class ZoeyMultiCanvas:
 
             # 3. Rotation
             if rot != 0:
-                theta_rad = math.radians(rot)
-                cos_t = abs(math.cos(theta_rad))
-                sin_t = abs(math.sin(theta_rad))
-                rotW = int(newW * cos_t + newH * sin_t + 0.5)
-                rotH = int(newW * sin_t + newH * cos_t + 0.5)
+                # Use torch.rot90 for exact 90-degree multiples (lossless, auto-swap dims)
+                if abs(rot) % 90 == 0:
+                    k = int(round(rot / 90)) % 4
+                    resized = torch.rot90(resized, k=k, dims=[1, 2])
+                    newH, newW = resized.shape[1], resized.shape[2]
+                else:
+                    theta_rad = math.radians(rot)
+                    cos_t = abs(math.cos(theta_rad))
+                    sin_t = abs(math.sin(theta_rad))
+                    rotW = int(newW * cos_t + newH * sin_t + 0.5)
+                    rotH = int(newW * sin_t + newH * cos_t + 0.5)
 
-                pad_l = max(0, (rotW - newW) // 2)
-                pad_r = max(0, rotW - newW - pad_l)
-                pad_t = max(0, (rotH - newH) // 2)
-                pad_b = max(0, rotH - newH - pad_t)
+                    pad_l = max(0, (rotW - newW) // 2)
+                    pad_r = max(0, rotW - newW - pad_l)
+                    pad_t = max(0, (rotH - newH) // 2)
+                    pad_b = max(0, rotH - newH - pad_t)
 
-                img_p = resized.permute(0, 3, 1, 2).contiguous()
-                img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="constant", value=0)
+                    img_p = resized.permute(0, 3, 1, 2).contiguous()
+                    img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="constant", value=0)
 
-                cx = (rotW - 1) / 2.0
-                cy = (rotH - 1) / 2.0
-                cos_θ = math.cos(theta_rad)
-                sin_θ = math.sin(theta_rad)
+                    cos_θ = math.cos(theta_rad)
+                    sin_θ = math.sin(theta_rad)
 
-                affine = torch.tensor([[
-                    [cos_θ, sin_θ, (1 - cos_θ) * cx - sin_θ * cy],
-                    [-sin_θ, cos_θ, sin_θ * cx + (1 - cos_θ) * cy],
-                ]], dtype=resized.dtype, device=resized.device).repeat(B, 1, 1)
+                    affine = torch.tensor([[
+                        [cos_θ, sin_θ, 0],
+                        [-sin_θ, cos_θ, 0],
+                    ]], dtype=resized.dtype, device=resized.device).repeat(B, 1, 1)
 
-                grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
-                rotated = F.grid_sample(img_p, grid, mode="bilinear", align_corners=False)
-                resized = rotated.permute(0, 2, 3, 1)
-                newH, newW = rotH, rotW
+                    grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
+                    rotated = F.grid_sample(img_p, grid, mode="bilinear", align_corners=False)
+                    resized = rotated.permute(0, 2, 3, 1)
+                    newH, newW = rotH, rotW
 
             # 4. Position and composite
             cx = baseW // 2 + int(layer["ox"] * baseW)
