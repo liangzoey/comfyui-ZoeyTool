@@ -101,7 +101,8 @@ class ZoeyMultiCanvas:
             else:
                 cur = img
 
-            # 3. Rotation (fixed: rot90 for 90° multiples, proper affine for others)
+            # 3. Rotation
+            cur_mask = None
             if rot != 0:
                 if abs(rot) % 90 == 0:
                     k = int(round(rot / 90)) % 4
@@ -114,14 +115,6 @@ class ZoeyMultiCanvas:
                     rotW = int(newW * cos_t + newH * sin_t + 0.5)
                     rotH = int(newW * sin_t + newH * cos_t + 0.5)
 
-                    pad_l = max(0, (rotW - newW) // 2)
-                    pad_r = max(0, rotW - newW - pad_l)
-                    pad_t = max(0, (rotH - newH) // 2)
-                    pad_b = max(0, rotH - newH - pad_t)
-
-                    img_p = cur.permute(0, 3, 1, 2).contiguous()
-                    img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="replicate")
-
                     cos_θ = math.cos(theta_rad)
                     sin_θ = math.sin(theta_rad)
 
@@ -131,11 +124,17 @@ class ZoeyMultiCanvas:
                     ]], dtype=cur.dtype, device=cur.device).repeat(B, 1, 1)
 
                     grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
-                    rotated = F.grid_sample(img_p, grid, mode="bilinear", padding_mode="border", align_corners=False)
+
+                    img_p = cur.permute(0, 3, 1, 2).contiguous()
+                    rotated = F.grid_sample(img_p, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
                     cur = rotated.permute(0, 2, 3, 1)
+
+                    # Validity mask: 1 where grid coords are within original image bounds
+                    cur_mask = ((grid[..., 0:1] >= -1.0) & (grid[..., 0:1] <= 1.0) &
+                                (grid[..., 1:2] >= -1.0) & (grid[..., 1:2] <= 1.0)).float()
                     newH, newW = rotH, rotW
 
-            # 4. Position and composite onto fixed canvas
+            # 4. Position and composite onto fixed canvas (masked for preview-matching transparency)
             cx = baseW // 2 + int(layer["ox"] * baseW)
             cy = baseH // 2 + int(layer["oy"] * baseH)
 
@@ -162,8 +161,13 @@ class ZoeyMultiCanvas:
             dst_part = result[:, dst_y1:dst_y2, dst_x1:dst_x2, :]
             op = layer["opacity"]
 
-            result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
-                src_part * op + dst_part * (1 - op)
+            if cur_mask is not None:
+                mask_part = cur_mask[:, src_y1:src_y2, src_x1:src_x2, :]
+                result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
+                    src_part * op * mask_part + dst_part * (1 - op * mask_part)
+            else:
+                result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
+                    src_part * op + dst_part * (1 - op)
 
         return (result,)
 
