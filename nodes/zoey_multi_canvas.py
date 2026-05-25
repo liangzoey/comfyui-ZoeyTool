@@ -69,7 +69,8 @@ class ZoeyMultiCanvas:
         dtype = layers[0]["img"].dtype
         device = layers[0]["img"].device
 
-        result = torch.zeros((B, baseH, baseW, C), dtype=dtype, device=device)
+        # Always output 3-channel RGB (support 4-channel RGBA input for per-pixel alpha)
+        result = torch.zeros((B, baseH, baseW, 3), dtype=dtype, device=device)
 
         for layer in layers:
             if not layer["visible"]:
@@ -101,15 +102,15 @@ class ZoeyMultiCanvas:
             else:
                 cur = img
 
-            # 3. Rotation
+            # 3. Rotation (CW positive, matching preview)
             cur_mask = None
             if rot != 0:
                 if abs(rot) % 90 == 0:
-                    k = int(round(rot / 90)) % 4
+                    k = (-int(round(rot / 90))) % 4
                     cur = torch.rot90(cur, k=k, dims=[1, 2])
                     newH, newW = cur.shape[1], cur.shape[2]
                 else:
-                    theta_rad = math.radians(rot)
+                    theta_rad = math.radians(-rot)
                     cos_t = abs(math.cos(theta_rad))
                     sin_t = abs(math.sin(theta_rad))
                     rotW = int(newW * cos_t + newH * sin_t + 0.5)
@@ -134,7 +135,7 @@ class ZoeyMultiCanvas:
                                 (grid[..., 1:2] >= -1.0) & (grid[..., 1:2] <= 1.0)).float()
                     newH, newW = rotH, rotW
 
-            # 4. Position and composite onto fixed canvas (masked for preview-matching transparency)
+            # 4. Position and composite onto fixed canvas
             cx = baseW // 2 + int(layer["ox"] * baseW)
             cy = baseH // 2 + int(layer["oy"] * baseH)
 
@@ -161,13 +162,18 @@ class ZoeyMultiCanvas:
             dst_part = result[:, dst_y1:dst_y2, dst_x1:dst_x2, :]
             op = layer["opacity"]
 
+            # Per-pixel alpha from 4-channel RGBA input
+            cur_alpha = src_part[:, :, :, 3:4] if cur.shape[3] >= 4 else 1.0
+            cur_rgb = src_part[:, :, :, :3]
+
             if cur_mask is not None:
                 mask_part = cur_mask[:, src_y1:src_y2, src_x1:src_x2, :]
-                result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
-                    src_part * op * mask_part + dst_part * (1 - op * mask_part)
+                alpha = cur_alpha * op * mask_part
             else:
-                result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
-                    src_part * op + dst_part * (1 - op)
+                alpha = cur_alpha * op
+
+            result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
+                cur_rgb * alpha + dst_part * (1 - alpha)
 
         return (result,)
 
