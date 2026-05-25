@@ -69,10 +69,72 @@ class ZoeyMultiCanvas:
         dtype = layers[0]["img"].dtype
         device = layers[0]["img"].device
 
-        # Always output 3-channel RGB (support 4-channel RGBA input for per-pixel alpha)
-        result = torch.zeros((B, baseH, baseW, 3), dtype=dtype, device=device)
+        # ── First pass: compute global bounding box of all visible layers ──
+        bx1, by1, bx2, by2 = 0, 0, baseW, baseH
+        layer_render_info = []
 
         for layer in layers:
+            info = {"visible": layer["visible"]}
+            if not layer["visible"]:
+                layer_render_info.append(info)
+                continue
+
+            img = layer["img"]
+            _, H, W, _ = img.shape
+            s = layer["scale"]
+            rot = layer["rotation"]
+
+            scW = max(1, int(W * s))
+            scH = max(1, int(H * s))
+
+            if rot != 0:
+                if abs(rot) % 90 == 0:
+                    k = (-int(round(rot / 90))) % 4
+                    if k in (1, 3):
+                        bbW, bbH = scH, scW
+                    else:
+                        bbW, bbH = scW, scH
+                else:
+                    rad = math.radians(rot)
+                    ct = abs(math.cos(rad))
+                    st = abs(math.sin(rad))
+                    bbW = int(scW * ct + scH * st + 0.5)
+                    bbH = int(scW * st + scH * ct + 0.5)
+            else:
+                bbW, bbH = scW, scH
+
+            info["bbW"] = bbW
+            info["bbH"] = bbH
+
+            # Position in original canvas coords
+            cx = baseW // 2 + int(layer["ox"] * baseW)
+            cy = baseH // 2 + int(layer["oy"] * baseH)
+
+            info["cx"] = cx
+            info["cy"] = cy
+
+            lx1 = cx - bbW // 2
+            ly1 = cy - bbH // 2
+            lx2 = lx1 + bbW
+            ly2 = ly1 + bbH
+
+            bx1 = min(bx1, lx1)
+            by1 = min(by1, ly1)
+            bx2 = max(bx2, lx2)
+            by2 = max(by2, ly2)
+
+            layer_render_info.append(info)
+
+        canvasW = bx2 - bx1
+        canvasH = by2 - by1
+        offset_x = -bx1
+        offset_y = -by1
+
+        # Always output 3-channel RGB
+        result = torch.zeros((B, canvasH, canvasW, 3), dtype=dtype, device=device)
+
+        # ── Second pass: render each layer ──
+        for idx, layer in enumerate(layers):
             if not layer["visible"]:
                 continue
 
@@ -82,6 +144,9 @@ class ZoeyMultiCanvas:
             rot = layer["rotation"]
             flip_h = layer["flip_h"]
             flip_v = layer["flip_v"]
+            info = layer_render_info[idx]
+            bbW = info["bbW"]
+            bbH = info["bbH"]
 
             # 1. Apply flip
             if flip_h or flip_v:
@@ -108,13 +173,10 @@ class ZoeyMultiCanvas:
                 if abs(rot) % 90 == 0:
                     k = (-int(round(rot / 90))) % 4
                     cur = torch.rot90(cur, k=k, dims=[1, 2])
-                    newH, newW = cur.shape[1], cur.shape[2]
                 else:
                     theta_rad = math.radians(rot)
                     cos_t = abs(math.cos(theta_rad))
                     sin_t = abs(math.sin(theta_rad))
-                    rotW = int(newW * cos_t + newH * sin_t + 0.5)
-                    rotH = int(newW * sin_t + newH * cos_t + 0.5)
 
                     cos_θ = math.cos(theta_rad)
                     sin_θ = math.sin(theta_rad)
@@ -124,7 +186,7 @@ class ZoeyMultiCanvas:
                         [-sin_θ, cos_θ, 0],
                     ]], dtype=cur.dtype, device=cur.device).repeat(B, 1, 1)
 
-                    grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
+                    grid = F.affine_grid(affine, (B, C, bbH, bbW), align_corners=False)
 
                     img_p = cur.permute(0, 3, 1, 2).contiguous()
                     rotated = F.grid_sample(img_p, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
@@ -133,25 +195,24 @@ class ZoeyMultiCanvas:
                     # Validity mask: 1 where grid coords are within original image bounds
                     cur_mask = ((grid[..., 0:1] >= -1.0) & (grid[..., 0:1] <= 1.0) &
                                 (grid[..., 1:2] >= -1.0) & (grid[..., 1:2] <= 1.0)).float()
-                    newH, newW = rotH, rotW
 
-            # 4. Position and composite onto fixed canvas
-            cx = baseW // 2 + int(layer["ox"] * baseW)
-            cy = baseH // 2 + int(layer["oy"] * baseH)
+            # 4. Position and composite onto expanded canvas
+            cx = info["cx"] + offset_x
+            cy = info["cy"] + offset_y
 
-            x1 = cx - newW // 2
-            y1 = cy - newH // 2
-            x2 = x1 + newW
-            y2 = y1 + newH
+            x1 = cx - bbW // 2
+            y1 = cy - bbH // 2
+            x2 = x1 + bbW
+            y2 = y1 + bbH
 
             src_x1 = max(0, -x1)
             src_y1 = max(0, -y1)
             dst_x1 = max(0, x1)
             dst_y1 = max(0, y1)
-            src_x2 = newW - max(0, x2 - baseW)
-            src_y2 = newH - max(0, y2 - baseH)
-            dst_x2 = min(baseW, x2)
-            dst_y2 = min(baseH, y2)
+            src_x2 = bbW - max(0, x2 - canvasW)
+            src_y2 = bbH - max(0, y2 - canvasH)
+            dst_x2 = min(canvasW, x2)
+            dst_y2 = min(canvasH, y2)
 
             sw = src_x2 - src_x1
             sh = src_y2 - src_y1
