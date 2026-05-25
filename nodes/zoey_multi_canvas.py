@@ -65,15 +65,12 @@ class ZoeyMultiCanvas:
         if not layers:
             return (image1,)
 
-        if len(layers) == 1:
-            return (layers[0]["img"],)
-
         B, baseH, baseW, C = layers[0]["img"].shape
         dtype = layers[0]["img"].dtype
         device = layers[0]["img"].device
 
-        result = torch.zeros((B, baseH, baseW, C), dtype=dtype, device=device)
-
+        # Process all visible layers through flip -> scale -> rotate
+        processed = []
         for layer in layers:
             if not layer["visible"]:
                 continue
@@ -88,8 +85,8 @@ class ZoeyMultiCanvas:
             # 1. Apply flip
             if flip_h or flip_v:
                 dims = []
-                if flip_h: dims.append(2)  # W
-                if flip_v: dims.append(1)  # H
+                if flip_h: dims.append(2)
+                if flip_v: dims.append(1)
                 img = torch.flip(img, dims=dims)
 
             # 2. Scale
@@ -98,19 +95,18 @@ class ZoeyMultiCanvas:
 
             if s != 1.0:
                 img_p = img.permute(0, 3, 1, 2)
-                resized = F.interpolate(
+                cur = F.interpolate(
                     img_p, size=(newH, newW), mode="bilinear", antialias=True
                 ).permute(0, 2, 3, 1)
             else:
-                resized = img
+                cur = img
 
             # 3. Rotation
             if rot != 0:
-                # Use torch.rot90 for exact 90-degree multiples (lossless, auto-swap dims)
                 if abs(rot) % 90 == 0:
                     k = int(round(rot / 90)) % 4
-                    resized = torch.rot90(resized, k=k, dims=[1, 2])
-                    newH, newW = resized.shape[1], resized.shape[2]
+                    cur = torch.rot90(cur, k=k, dims=[1, 2])
+                    newH, newW = cur.shape[1], cur.shape[2]
                 else:
                     theta_rad = math.radians(rot)
                     cos_t = abs(math.cos(theta_rad))
@@ -123,7 +119,7 @@ class ZoeyMultiCanvas:
                     pad_t = max(0, (rotH - newH) // 2)
                     pad_b = max(0, rotH - newH - pad_t)
 
-                    img_p = resized.permute(0, 3, 1, 2).contiguous()
+                    img_p = cur.permute(0, 3, 1, 2).contiguous()
                     img_p = F.pad(img_p, (pad_l, pad_r, pad_t, pad_b), mode="constant", value=0)
 
                     cos_θ = math.cos(theta_rad)
@@ -132,16 +128,25 @@ class ZoeyMultiCanvas:
                     affine = torch.tensor([[
                         [cos_θ, sin_θ, 0],
                         [-sin_θ, cos_θ, 0],
-                    ]], dtype=resized.dtype, device=resized.device).repeat(B, 1, 1)
+                    ]], dtype=cur.dtype, device=cur.device).repeat(B, 1, 1)
 
                     grid = F.affine_grid(affine, (B, C, rotH, rotW), align_corners=False)
                     rotated = F.grid_sample(img_p, grid, mode="bilinear", align_corners=False)
-                    resized = rotated.permute(0, 2, 3, 1)
+                    cur = rotated.permute(0, 2, 3, 1)
                     newH, newW = rotH, rotW
 
-            # 4. Position and composite
-            cx = baseW // 2 + int(layer["ox"] * baseW)
-            cy = baseH // 2 + int(layer["oy"] * baseH)
+            processed.append((cur, newH, newW, layer["ox"], layer["oy"], layer["opacity"]))
+
+        if not processed:
+            return (image1,)
+
+        # First visible layer defines the canvas size (expands if rotated)
+        baseH, baseW = processed[0][1], processed[0][2]
+        result = torch.zeros((B, baseH, baseW, C), dtype=dtype, device=device)
+
+        for cur, newH, newW, ox, oy, op in processed:
+            cx = baseW // 2 + int(ox * baseW)
+            cy = baseH // 2 + int(oy * baseH)
 
             x1 = cx - newW // 2
             y1 = cy - newH // 2
@@ -162,9 +167,8 @@ class ZoeyMultiCanvas:
             if sw <= 0 or sh <= 0:
                 continue
 
-            src_part = resized[:, src_y1:src_y2, src_x1:src_x2, :]
+            src_part = cur[:, src_y1:src_y2, src_x1:src_x2, :]
             dst_part = result[:, dst_y1:dst_y2, dst_x1:dst_x2, :]
-            op = layer["opacity"]
 
             result[:, dst_y1:dst_y2, dst_x1:dst_x2, :] = \
                 src_part * op + dst_part * (1 - op)
