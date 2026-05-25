@@ -64,15 +64,15 @@ class 多功能图像编辑器:
                 
         elif 操作类型 == "旋转180度":
             for img in 图像列表:
-                结果图像.append(img.rotate(180))
-                
+                结果图像.append(img.transpose(Image.ROTATE_180))
+
         elif 操作类型 == "顺时针旋转90度":
             for img in 图像列表:
-                结果图像.append(img.rotate(-90))
-                
+                结果图像.append(img.transpose(Image.ROTATE_270))
+
         elif 操作类型 == "逆时针旋转90度":
             for img in 图像列表:
-                结果图像.append(img.rotate(90))
+                结果图像.append(img.transpose(Image.ROTATE_90))
                 
         elif 操作类型 == "图像分割":
             for img in 图像列表:
