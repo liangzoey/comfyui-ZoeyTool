@@ -169,7 +169,7 @@ class ZoeyLightHandle:
             intens_desc = self._intensity_text(intens)
             type_desc = self._LIGHT_TYPE_DESC.get(ltype, ltype)
             parts.append(f"{type_desc}，{color}色光光源来自{direction}，{range_desc}，{intens_desc} (坐标: {px},{py})")
-        return "根据图中色块方向和颜色打光，并移除色块，保持主体清晰，" + "; ".join(parts)
+        return "主体和背景保持不变，根据图中色块方向和颜色打光，并移除色块，保持主体清晰，" + "; ".join(parts)
 
     def _compute_handle_xy(self, azimuth, elevation):
         """Convert 3D angles to 2D normalized coordinates (0-1) on image."""
