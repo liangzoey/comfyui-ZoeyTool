@@ -156,28 +156,22 @@ class ZoeyTextOverlay:
             except Exception:
                 font = ImageFont.load_default()
 
-            bbox = draw.textbbox((0, 0), text, font=font)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
+            # ── 文字渲染 ──
+            target_x = ox * W
+            target_y = oy * H
 
-            px = int(ox * W - tw / 2)
-            py = int(oy * H - th / 2)
-
-            text_layer = Image.new("RGBA", (tw + 8, th + 8), (0, 0, 0, 0))
-            td = ImageDraw.Draw(text_layer)
-            td.text((4 - bbox[0], 4 - bbox[1]), text, font=font, fill=fill_color)
-
+            # 直接在 overlay 上用 anchor="mm" 绘制（匹配 Canvas textAlign=center+textBaseline=middle）
+            # 不使用 getbbox()+crop 重新居中，避免视觉包围盒中心与排版中心不一致
             if rot != 0:
-                text_layer = text_layer.rotate(rot, expand=True, center=(text_layer.width // 2, text_layer.height // 2),
-                                                fillcolor=(0, 0, 0, 0))
-                # 旋转后重新居中
-                paste_x = int(ox * W - text_layer.width / 2)
-                paste_y = int(oy * H - text_layer.height / 2)
+                # 旋转文字：用临时图层绘制，再绕 (target_x, target_y) 旋转
+                text_layer = Image.new("RGBA", pil.size, (0, 0, 0, 0))
+                td = ImageDraw.Draw(text_layer)
+                td.text((target_x, target_y), text, font=font, fill=fill_color, anchor="mm")
+                text_layer = text_layer.rotate(rot, center=(target_x, target_y), fillcolor=(0, 0, 0, 0))
+                overlay = Image.alpha_composite(overlay, text_layer)
             else:
-                paste_x = px - 4
-                paste_y = py - 4
-
-            overlay.paste(text_layer, (paste_x, paste_y), text_layer)
+                draw = ImageDraw.Draw(overlay)
+                draw.text((target_x, target_y), text, font=font, fill=fill_color, anchor="mm")
 
             # 透明度通过 overlay alpha 通道单次控制，避免双重叠加
             if opacity < 1:

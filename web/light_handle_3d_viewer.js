@@ -17,7 +17,7 @@ canvas:active{cursor:grabbing}
 </style>
 </head>
 <body>
-<div class="info" id="info">Az: <span id="azVal">0</span>&deg; El: <span id="elVal">30</span>&deg; &bull; 拖拽旋转 | 双击定位 | 滚轮调大小</div>
+<div class="info" id="info">Az: <span id="azVal">0</span>&deg; El: <span id="elVal">30</span>&deg; &bull; 拖拽旋转 | 双击定位 | 滚轮调大小 | <span id="handleCount"></span></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
 <script>
 // --- Scene ---
@@ -71,7 +71,7 @@ function setCardAspect(w, h) {
   scene.add(border);
 }
 
-// --- Projected light spot on card (shape follows handle_shape) ---
+// --- Projected light spot on card (active handle) ---
 var spotGroup = new THREE.Group();
 spotGroup.position.z = 0.01;
 card.add(spotGroup);
@@ -155,7 +155,7 @@ function updateProjectedSpot() {
   centerDot.scale.set(dotR / 0.04, dotR / 0.04, 1);
 }
 
-// --- Light orb ---
+// --- Light orb (active handle) ---
 var orbGeo = new THREE.SphereGeometry(0.2, 24, 24);
 var orbMat = new THREE.MeshStandardMaterial({
   color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.6,
@@ -197,6 +197,124 @@ var rayLine = new THREE.Line(rayGeo, rayMat);
 rayLine.renderOrder = 0;
 scene.add(rayLine);
 
+// ===== EXTRA HANDLES (non-active) =====
+var extraOrbs = [];        // { orb, outline, ghost, spotGroup }
+var extraGhosts = [];
+var extraSpotGroups = [];
+
+function clearExtraHandles() {
+  extraOrbs.forEach(function(o) {
+    scene.remove(o);
+  });
+  extraGhosts.forEach(function(g) {
+    scene.remove(g);
+  });
+  extraSpotGroups.forEach(function(sg) {
+    card.remove(sg);
+  });
+  extraOrbs = [];
+  extraGhosts = [];
+  extraSpotGroups = [];
+}
+
+function rebuildExtraHandles(handlesArray, activeIdx) {
+  clearExtraHandles();
+  if (!handlesArray || handlesArray.length < 2) return;
+
+  handlesArray.forEach(function(h, i) {
+    if (i === activeIdx) return; // skip active handle
+
+    var a = (h.azimuth || 0) * Math.PI / 180;
+    var e = (h.elevation || 30) * Math.PI / 180;
+    var col = new THREE.Color(h.light_color || '#FFFFFF');
+
+    // --- Small orb on sphere ---
+    var smallRad = 0.1;
+    var sog = new THREE.SphereGeometry(smallRad, 16, 16);
+    var som = new THREE.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: 0.25,
+      roughness: 0.3, metalness: 0.05, transparent: true, opacity: 0.5
+    });
+    var smallOrb = new THREE.Mesh(sog, som);
+    smallOrb.position.set(
+      SPHERE_R * Math.cos(e) * Math.sin(a),
+      SPHERE_R * Math.sin(e),
+      SPHERE_R * Math.cos(e) * Math.cos(a)
+    );
+    smallOrb.renderOrder = 1;
+    scene.add(smallOrb);
+    extraOrbs.push(smallOrb);
+
+    // --- Small outline ---
+    var sol = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.SphereGeometry(smallRad, 12, 10)),
+      new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.2 })
+    );
+    smallOrb.add(sol);
+
+    // --- Ghost for behind-card ---
+    var sGhostMat = new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.0,
+      depthWrite: false, side: THREE.DoubleSide
+    });
+    var sGhost = new THREE.Mesh(new THREE.SphereGeometry(smallRad, 12, 12), sGhostMat);
+    sGhost.renderOrder = 1;
+    scene.add(sGhost);
+    extraGhosts.push(sGhost);
+
+    // --- Card spot (small, colored) ---
+    var hx = 0.5 + 0.5 * Math.cos(e) * Math.sin(a);
+    var hy = 0.5 - 0.5 * Math.sin(e);
+    var s = Math.max(0.02, (h.ball_size || 0.3) * 2);
+
+    var spotMat = new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.12,
+      depthTest: false, depthWrite: false, side: THREE.DoubleSide
+    });
+    var spotMesh = new THREE.Mesh(new THREE.CircleGeometry(s, 24), spotMat);
+    spotMesh.position.set((hx - 0.5) * 2, (0.5 - hy) * 2, 0.005);
+    card.add(spotMesh);
+    extraSpotGroups.push(spotMesh);
+
+    // Small dot for this handle
+    var tinyDotMat = new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.4,
+      depthTest: false, depthWrite: false, side: THREE.DoubleSide
+    });
+    var tinyDot = new THREE.Mesh(new THREE.CircleGeometry(0.02, 8), tinyDotMat);
+    tinyDot.position.set((hx - 0.5) * 2, (0.5 - hy) * 2, 0.006);
+    card.add(tinyDot);
+    extraSpotGroups.push(tinyDot);
+
+    // Store ghost reference for update
+    sGhost.userData = {
+      pos: new THREE.Vector3(
+        SPHERE_R * Math.cos(e) * Math.sin(a),
+        SPHERE_R * Math.sin(e),
+        SPHERE_R * Math.cos(e) * Math.cos(a)
+      ),
+      opacity: 0
+    };
+  });
+
+  updateExtraGhosts();
+}
+
+function updateExtraGhosts() {
+  extraGhosts.forEach(function(g) {
+    var p = g.userData.pos;
+    if (!p) return;
+    var isBehind = p.z < 0;
+    g.visible = isBehind;
+    if (isBehind) {
+      g.position.set(-p.x * 0.85, -p.y * 0.85, -p.z * 0.85);
+      var ghostOpacity = Math.min(0.2, 0.08 + 0.12 * (Math.abs(p.z) / SPHERE_R));
+      g.material.opacity = ghostOpacity;
+    }
+    g.material.needsUpdate = true;
+  });
+}
+
 // --- State ---
 var azimuth = 0, elevation = 30, ballSize = 0.3, lightColor = '#FFFFFF';
 var isDragging = false;
@@ -223,7 +341,6 @@ function updateScene() {
   var isBehind = oz < 0;
   ghostOrb.visible = isBehind;
   if (isBehind) {
-    // Mirror to front side
     var gx = -ox * 0.85;
     var gy = -oy * 0.85;
     var gz = -oz * 0.85;
@@ -405,9 +522,22 @@ window.addEventListener('message', function(e) {
     if (d.handleShape) setSpotShape(d.handleShape);
     updateAll();
     setProjectedColor(lightColor);
+
+    // Rebuild extra handles for multi-handle support
+    if (d.handles) {
+      rebuildExtraHandles(d.handles, d.activeIndex !== undefined ? d.activeIndex : -1);
+    }
+    // Update handle count
+    var countEl = document.getElementById('handleCount');
+    if (countEl && d.handles) {
+      countEl.textContent = d.handles.length > 0 ? d.handles.length + ' 个手柄' : '';
+    }
   }
   if (d.type === 'SHAPE_UPDATE') {
     if (d.handleShape) setSpotShape(d.handleShape);
+    if (d.handles) {
+      rebuildExtraHandles(d.handles, d.activeIndex !== undefined ? d.activeIndex : -1);
+    }
   }
   if (d.type === 'UPDATE_IMAGE') loadImage(d.imageUrl);
   if (d.type === 'RESIZE') onResize();

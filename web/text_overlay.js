@@ -38,7 +38,7 @@ app.registerExtension({
 
             // ── Font mapping: label → file path → CSS font-family ──
             const FONTS = [
-                { label: "自动检测",  path: "",       css: "sans-serif" },
+                { label: "自动检测",  path: "",       css: "'Microsoft YaHei',sans-serif" },
                 { label: "微软雅黑",  path: "C:/Windows/Fonts/msyh.ttc",   css: "'Microsoft YaHei',sans-serif" },
                 { label: "黑体",      path: "C:/Windows/Fonts/simhei.ttf", css: "'SimHei',sans-serif" },
                 { label: "宋体",      path: "C:/Windows/Fonts/simsun.ttc", css: "'SimSun',serif" },
@@ -172,6 +172,21 @@ app.registerExtension({
             bar.appendChild(opVal);
             bar.appendChild(rotLbl);
             bar.appendChild(rotVal);
+
+            // ── Refresh button ──
+            const refreshBtn = document.createElement("button");
+            refreshBtn.textContent = "⟳";
+            refreshBtn.title = "刷新图像预览（手动重载上游图像）";
+            refreshBtn.style.cssText = "font-size:15px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#4fc3f7;cursor:pointer;height:22px;width:26px;padding:0 0 2px;text-align:center;line-height:1;flex:none;";
+            refreshBtn.addEventListener("click", () => {
+                s.loaded = false;
+                s.img = null;
+                s.loadError = null;
+                draw();
+                retryLoad(30, 200);
+            });
+
+            bar.appendChild(refreshBtn);
             root.appendChild(bar);
 
             // ── Events ──
@@ -182,12 +197,14 @@ app.registerExtension({
                 draw();
             });
 
-            fontSelect.addEventListener("change", () => {
+            fontSelect.addEventListener("change", async () => {
                 const entry = FONTS[parseInt(fontSelect.value)];
                 s.fontPath = entry.path;
                 s.fontFamily = entry.css;
                 const fw = getW("font_path");
                 if (fw) { fw.value = s.fontPath; if (fw.callback) fw.callback(s.fontPath); }
+                // 确保浏览器加载了该字体，获得正确的度量
+                try { await document.fonts.load(`1px ${entry.css}`); } catch (e) {}
                 draw();
             });
 
@@ -215,7 +232,7 @@ app.registerExtension({
                 return { nx: (cx - info.ox) / info.scX + info.vl, ny: (cy - info.oy) / info.scY + info.vt };
             }
 
-            function cssFont(px) { return `${px}px sans-serif`; }
+            function cssFont(px) { return `${px}px ${s.fontFamily || 'sans-serif'}`; }
 
             function draw() {
                 const rect = wrap.getBoundingClientRect();

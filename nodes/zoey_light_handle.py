@@ -71,55 +71,112 @@ class ZoeyLightHandle:
                 "intensity": ("FLOAT", {
                     "default": 5.0, "min": 0.0, "max": 10.0, "step": 0.1, "display": "slider"
                 }),
+                "light_type": (["摄影棚灯光", "丁达尔光", "光斑", "束光", "散射光", "柔光",
+                                "硬光", "点光", "面光", "条光", "光晕", "漏光",
+                                "轮廓光", "斑驳光", "逆光"], {"default": "摄影棚灯光"}),
             },
             "optional": {
                 "subject_mask": ("MASK",),
                 "behind_subject": ("BOOLEAN", {"default": False}),
+                "handles_json": ("STRING", {"default": "[]", "multiline": True}),
             }
         }
 
     RETURN_TYPES = ("MASK", "STRING", "IMAGE")
     RETURN_NAMES = ("light_mask", "light_prompt", "preview_image")
+    OUTPUT_NODE = True
     FUNCTION = "generate"
     CATEGORY = "Zoey工具集/图像编辑"
-    OUTPUT_NODE = True
 
-    def _build_prompt(self, handle_x, handle_y, behind_subject, light_color):
+    def _direction_text(self, hx, hy, behind_subject):
+        """Convert normalized coordinates to direction description.
+        Format: 左侧主体前方 / 左下主体后方 / 主体正前方"""
         th = 0.35
-        if handle_x < th:
-            x_dir = "左"
-        elif handle_x > (1 - th):
-            x_dir = "右"
-        else:
-            x_dir = ""
+        x_raw = "左" if hx < th else ("右" if hx > (1 - th) else "")
+        y_raw = "上" if hy < th else ("下" if hy > (1 - th) else "")
 
-        if handle_y < th:
-            y_dir = "上"
-        elif handle_y > (1 - th):
-            y_dir = "下"
-        else:
-            y_dir = ""
+        side = "后" if behind_subject else "前"
 
-        if behind_subject:
-            if x_dir == "" and y_dir == "":
-                direction = "正后方"
-            elif x_dir == "":
-                direction = f"后{y_dir}方"
-            elif y_dir == "":
-                direction = f"{x_dir}后方"
-            else:
-                direction = f"{x_dir}后{y_dir}方"
-        else:
-            if x_dir == "" and y_dir == "":
-                direction = "正前方"
-            elif x_dir == "":
-                direction = f"前{y_dir}方"
-            elif y_dir == "":
-                direction = f"{x_dir}前方"
-            else:
-                direction = f"{x_dir}前{y_dir}方"
+        if not x_raw and not y_raw:
+            return f"主体正{side}方"
+        # x-only: add 侧, e.g. "左侧" → "左侧主体前方"
+        if x_raw and not y_raw:
+            return f"{x_raw}侧主体{side}方"
+        # y-only: e.g. "上" → "上主体前方"
+        if not x_raw and y_raw:
+            return f"{y_raw}主体{side}方"
+        # both x and y: e.g. "左下" → "左下主体后方"
+        return f"{x_raw}{y_raw}主体{side}方"
 
-        return f"根据图中色块方向和颜色打光，并移除色块，{light_color}色光光源来自{direction}"
+    def _range_text(self, ball_size):
+        """Describe light range based on ball_size (0.02~1.0)."""
+        if ball_size < 0.12:
+            return "点光源"
+        elif ball_size < 0.25:
+            return "小范围"
+        elif ball_size < 0.45:
+            return "中范围"
+        else:
+            return "大范围"
+
+    def _intensity_text(self, intensity):
+        """Describe light intensity (0~10)."""
+        if intensity < 2:
+            return "强度微弱"
+        elif intensity < 4:
+            return "强度较弱"
+        elif intensity < 6:
+            return "强度适中"
+        elif intensity < 8:
+            return "强度较强"
+        else:
+            return "强度强烈"
+
+    _LIGHT_TYPE_DESC = {
+        "摄影棚灯光": "摄影棚灯光，柔和均匀的棚拍布光",
+        "丁达尔光": "丁达尔光，光线在空气中穿透形成可见光柱，带有朦胧散射效果",
+        "光斑": "光斑，光线透过缝隙形成斑驳的光点效果",
+        "束光": "束光，光线收束成集中的光束，方向感强烈",
+        "散射光": "散射光，光线经过漫射变得柔和均匀，阴影柔和",
+        "柔光": "柔光，光线经过柔化处理，阴影边缘模糊过渡自然",
+        "硬光": "硬光，光线直接照射，明暗对比强烈，阴影边缘锐利",
+        "点光": "点光，从点状光源发出呈放射状扩散，有明显光源感",
+        "面光": "面光，从大面积发光面发出，光线均匀柔和",
+        "条光": "条光，光线呈条带状分布，有方向性的线性照明",
+        "光晕": "光晕，光线在边缘扩散形成柔和的辉光发光效果",
+        "漏光": "漏光，光线从缝隙或边缘渗入形成不规则光带",
+        "轮廓光": "轮廓光，从侧后方勾勒主体边缘的照明光线",
+        "斑驳光": "斑驳光，光线穿过遮挡物形成明暗交错的光影效果",
+        "逆光": "逆光，光线从主体背后照射形成剪影效果",
+    }
+
+    def _build_coord_string(self, handles, image_width, image_height):
+        """Build prompt with original format, detailed light type description."""
+        parts = []
+        for h in handles:
+            color = h.get('color', h.get('light_color', '#FFFFFF'))
+            hx = h.get('x', h.get('handle_x', 0.5))
+            hy = h.get('y', h.get('handle_y', 0.5))
+            behind = h.get('behind_subject', False)
+            bsize = h.get('ball_size', 0.3)
+            ltype = h.get('light_type', '摄影棚灯光')
+            intens = h.get('intensity', 5.0)
+            px = int(round(hx * image_width))
+            py = int(round(hy * image_height))
+            direction = self._direction_text(hx, hy, behind)
+            range_desc = self._range_text(bsize)
+            intens_desc = self._intensity_text(intens)
+            type_desc = self._LIGHT_TYPE_DESC.get(ltype, ltype)
+            parts.append(f"{type_desc}，{color}色光光源来自{direction}，{range_desc}，{intens_desc} (坐标: {px},{py})")
+        return "根据图中色块方向和颜色打光，并移除色块，保持主体清晰，" + "; ".join(parts)
+
+    def _compute_handle_xy(self, azimuth, elevation):
+        """Convert 3D angles to 2D normalized coordinates (0-1) on image."""
+        az_rad = math.radians(azimuth)
+        el_rad = math.radians(elevation)
+        hx = max(0.0, min(1.0, 0.5 + 0.5 * math.cos(el_rad) * math.sin(az_rad)))
+        hy = max(0.0, min(1.0, 0.5 - 0.5 * math.sin(el_rad)))
+        return hx, hy
 
     def _generate_shape_mask(self, h, w, cx, cy, radius, shape):
         y_coords, x_coords = torch.meshgrid(
@@ -175,101 +232,129 @@ class ZoeyLightHandle:
         else:  # 圆形
             draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=outline, width=2)
 
-    def _draw_handle_overlay(self, img_tensor, width, height, cx, cy, radius, light_color, intensity=5.0, handle_shape="圆形", behind_subject=False, subject_mask=None):
+    def _parse_handles(self, handles_json, azimuth, elevation, ball_size, handle_shape, light_color, intensity, behind_subject, light_type):
+        """Parse handles_json or create default single handle."""
+        import json
+        if handles_json and handles_json.strip() not in ("", "[]"):
+            try:
+                raw = json.loads(handles_json)
+                if isinstance(raw, list) and len(raw) > 0:
+                    # Ensure all handles have required fields
+                    return [{
+                        "x": h.get("x", 0.5),
+                        "y": h.get("y", 0.5),
+                        "azimuth": h.get("azimuth", azimuth),
+                        "elevation": h.get("elevation", elevation),
+                        "ball_size": h.get("ball_size", ball_size),
+                        "handle_shape": h.get("handle_shape", handle_shape),
+                        "light_color": h.get("light_color", light_color),
+                        "intensity": h.get("intensity", intensity),
+                        "behind_subject": h.get("behind_subject", behind_subject),
+                        "light_type": h.get("light_type", light_type),
+                    } for h in raw]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Fallback: single handle from current widget values
+        return [{
+            "azimuth": azimuth,
+            "elevation": elevation,
+            "ball_size": ball_size,
+            "handle_shape": handle_shape,
+            "light_color": light_color,
+            "intensity": intensity,
+            "behind_subject": behind_subject,
+            "light_type": light_type,
+        }]
+
+    def _draw_all_handles(self, img_tensor, width, height, handles):
+        """Draw all handles on the image preview."""
         img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np).convert('RGBA')
-
-        h = light_color.lstrip('#')
-        cr = int(h[0:2], 16) if len(h) >= 2 else 255
-        cg = int(h[2:4], 16) if len(h) >= 4 else 255
-        cb = int(h[4:6], 16) if len(h) >= 6 else 255
-
-        # Intensity → opacity: 0→fully transparent, 10→fully opaque
-        opacity = max(0.05, min(1.0, intensity / 10.0))
-        alpha = int(opacity * 255)
-
         overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
-        r = max(6, int(radius))
 
-        # Draw the selected shape (opacity controlled by intensity)
-        self._draw_shape_on_canvas(draw, cx, cy, r, cr, cg, cb, alpha, handle_shape, width/2, height/2)
+        for h in handles:
+            if 'x' in h and 'y' in h:
+                hx, hy = h['x'], h['y']
+            else:
+                hx, hy = self._compute_handle_xy(
+                    h.get('azimuth', 0), h.get('elevation', 30))
+            cx = hx * width
+            cy = hy * height
+            radius = max(6, int(h.get('ball_size', 0.3) * max(width, height)))
 
-        # Center dot (no crosshair)
-        if alpha > 5:
-            draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(cr, cg, cb, alpha))
+            color = h.get('light_color', '#FFFFFF')
+            color_s = color.lstrip('#')
+            cr = int(color_s[0:2], 16) if len(color_s) >= 2 else 255
+            cg = int(color_s[2:4], 16) if len(color_s) >= 4 else 255
+            cb = int(color_s[4:6], 16) if len(color_s) >= 6 else 255
 
-        # Composite handle onto image
+            intensity = h.get('intensity', 5.0)
+            opacity = max(0.05, min(1.0, intensity / 10.0))
+            alpha = int(opacity * 255)
+            shape = h.get('handle_shape', '圆形')
+
+            self._draw_shape_on_canvas(draw, int(cx), int(cy), radius,
+                cr, cg, cb, alpha, shape, width / 2, height / 2)
+            if alpha > 5:
+                draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3],
+                    fill=(cr, cg, cb, alpha))
+
         base_with_handle = Image.alpha_composite(pil_img, overlay)
 
-        # Place subject on top so handle appears behind the subject
-        if behind_subject:
-            subject_only = None
-            if subject_mask is not None:
-                # Use provided mask
-                sm = subject_mask
-                while sm.dim() > 2:
-                    sm = sm[0]
-                mask_np = (sm.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-                mask_pil = Image.fromarray(mask_np).resize((width, height), Image.BILINEAR)
-                subject_only = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-                subject_only.paste(pil_img, (0, 0), mask_pil)
-            elif HAS_REMBG:
-                # Auto remove background (same approach as mask_draw_rectangle)
-                ensure_rmbg_model()
-                subject_only = remove(
-                    pil_img.convert('RGB'),
-                    model_path=RMBG_MODEL_PATH,
-                    only_mask=False,
-                    post_process_mask=True
-                ).convert("RGBA")
+        # Behind-subject compositing (uses first handle's behind_subject flag)
+        behind = handles[0].get('behind_subject', False) if handles else False
+        if behind:
+            # Simplified: behind-subject for preview requires subject_mask
+            # (the actual mask computation handles this in generate())
+            pass
 
-            if subject_only is not None:
-                result = Image.alpha_composite(base_with_handle, subject_only)
-            else:
-                result = base_with_handle
-        else:
-            result = base_with_handle
+        return torch.from_numpy(
+            np.array(base_with_handle.convert('RGB')).astype(np.float32) / 255.0
+        ).unsqueeze(0)
 
-        return torch.from_numpy(np.array(result.convert('RGB')).astype(np.float32) / 255.0).unsqueeze(0)
-
-    def generate(self, image, azimuth, elevation, ball_size, handle_shape="圆形", light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False):
+    def generate(self, image, azimuth, elevation, ball_size, handle_shape="圆形", light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False, handles_json="[]", light_type="摄影棚灯光"):
         batch_size, height, width, channels = image.shape
         img = image[0]
 
-        # Project 3D angles to 2D handle position on the image
-        az_rad = math.radians(azimuth)
-        el_rad = math.radians(elevation)
-        handle_x = max(0.0, min(1.0, 0.5 + 0.5 * math.cos(el_rad) * math.sin(az_rad)))
-        handle_y = max(0.0, min(1.0, 0.5 - 0.5 * math.sin(el_rad)))
+        # Parse multiple handles
+        handles = self._parse_handles(handles_json, azimuth, elevation,
+            ball_size, handle_shape, light_color, intensity, behind_subject, light_type)
 
-        cx = handle_x * width
-        cy = handle_y * height
-        radius = max(2.0, ball_size * max(width, height))
+        # Generate combined mask from all handles
+        combined_mask = None
+        coord_items = []
+        for h in handles:
+            if 'x' in h and 'y' in h:
+                hx, hy = h['x'], h['y']
+            else:
+                hx, hy = self._compute_handle_xy(
+                    h.get('azimuth', 0), h.get('elevation', 30))
+            cx = hx * width
+            cy = hy * height
+            bsize = h.get('ball_size', 0.3)
+            radius = max(2.0, bsize * max(width, height))
+            shape = h.get('handle_shape', '圆形')
 
-        # Shape gradient mask
-        light_mask = self._generate_shape_mask(height, width, cx, cy, radius, handle_shape)
+            mask = self._generate_shape_mask(height, width, cx, cy, radius, shape)
+            combined_mask = mask if combined_mask is None else torch.max(combined_mask, mask)
+            coord_items.append({'x': hx, 'y': hy, 'ball_size': bsize, 'intensity': h.get('intensity', 5.0), 'light_type': h.get('light_type', '摄影棚灯光'), 'color': h.get('light_color', '#FFFFFF'), 'behind_subject': h.get('behind_subject', False)})
 
-        # Behind-subject compositing for mask
-        if behind_subject:
+        # Behind-subject compositing for mask (use first handle's flag)
+        h_behind = handles[0].get('behind_subject', False) if handles else behind_subject
+        if h_behind:
             sub_mask_tensor = None
             if subject_mask is not None:
-                # Use provided mask
                 sm = subject_mask
                 while sm.dim() > 2:
                     sm = sm[0]
                 sub_mask_tensor = sm
             elif HAS_REMBG:
-                # Auto generate subject mask via rembg
                 ensure_rmbg_model()
                 img_np_for_mask = (255. * img.cpu().numpy()).clip(0, 255).astype(np.uint8)
                 pil_rgb = Image.fromarray(img_np_for_mask)
-                mask_img = remove(
-                    pil_rgb,
-                    model_path=RMBG_MODEL_PATH,
-                    only_mask=True,
-                    post_process_mask=True
-                ).convert("L")
+                mask_img = remove(pil_rgb, model_path=RMBG_MODEL_PATH,
+                    only_mask=True, post_process_mask=True).convert("L")
                 mask_arr = np.array(mask_img).astype(np.float32) / 255.0
                 sub_mask_tensor = torch.from_numpy(mask_arr)
 
@@ -277,21 +362,19 @@ class ZoeyLightHandle:
                 if sub_mask_tensor.shape != (height, width):
                     sub_np = (sub_mask_tensor.cpu().numpy() * 255).astype(np.uint8)
                     sub_pil = Image.fromarray(sub_np).resize((width, height), Image.BILINEAR)
-                    sub_mask_tensor = torch.from_numpy(np.array(sub_pil).astype(np.float32)) / 255.0
-                light_mask = light_mask * (1.0 - sub_mask_tensor)
+                    sub_mask_tensor = torch.from_numpy(
+                        np.array(sub_pil).astype(np.float32)) / 255.0
+                combined_mask = combined_mask * (1.0 - sub_mask_tensor)
 
-        light_mask = light_mask.unsqueeze(0).to(torch.float32)
+        light_mask = combined_mask.unsqueeze(0).to(torch.float32)
 
-        # Lighting prompt
-        prompt = self._build_prompt(handle_x, handle_y, behind_subject, light_color)
+        # Coordinate prompt
+        prompt = self._build_coord_string(coord_items, width, height)
 
-        # Annotated image output
-        annotated = self._draw_handle_overlay(
-            img, width, height, cx, cy, radius, light_color,
-            intensity, handle_shape, behind_subject, subject_mask
-        )
+        # Annotated image with all handles drawn
+        annotated = self._draw_all_handles(img, width, height, handles)
 
-        # Frontend preview: ORIGINAL image (JS draws interactive handle)
+        # Frontend preview: ORIGINAL image (JS draws interactive handles)
         image_base64 = ""
         try:
             img_np = (255. * img.cpu().numpy()).clip(0, 255).astype(np.uint8)
