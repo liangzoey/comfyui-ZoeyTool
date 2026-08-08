@@ -41,7 +41,7 @@ class HunyuanTranslatorNode:
                 "文本": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
                 "源语言": (["自动检测", "中文", "英文", "日语", "韩语", "法语", "西班牙语", "俄语", "阿拉伯语", "德语", "葡萄牙语", "意大利语", "泰语", "越南语", "印尼语", "繁体中文", "粤语", "藏语", "维吾尔语", "蒙古语", "哈萨克语"],),
                 "目标语言": (["中文", "英文", "日语", "韩语", "法语", "西班牙语", "俄语", "阿拉伯语", "德语", "葡萄牙语", "意大利语", "泰语", "越南语", "印尼语", "繁体中文", "粤语", "藏语", "维吾尔语", "蒙古语", "哈萨克语"], {"default": "英文"}),
-                "模型版本": (["HY-MT2.0-2B", "HY-MT2.0-7B", "HY-MT2.0-70B", "HY-MT1.5-1.8B", "HY-MT1.5-7B"], {"default": "HY-MT2.0-2B"}),
+                "模型版本": (["HY-MT2.0-1.8B", "HY-MT2.0-7B", "HY-MT2.0-70B", "HY-MT1.5-1.8B", "HY-MT1.5-7B"], {"default": "HY-MT2.0-1.8B"}),
                 "设备": (["auto", "cuda", "cpu"], {"default": "auto"}),
             },
             "optional": {
@@ -84,7 +84,7 @@ class HunyuanTranslatorNode:
         print(f"[HunyuanTranslator] 当前工作目录: {os.getcwd()}")
         
         hf_model_map = {
-            "HY-MT2.0-2B": "tencent/HY-MT2.0-2B",
+            "HY-MT2.0-1.8B": "tencent/HY-MT2.0-1.8B",
             "HY-MT2.0-7B": "tencent/HY-MT2.0-7B",
             "HY-MT2.0-70B": "tencent/HY-MT2.0-70B",
             "HY-MT1.5-1.8B": "tencent/HY-MT1.5-1.8B",
@@ -186,13 +186,22 @@ class HunyuanTranslatorNode:
 
         prompt = self._build_prompt(文本, src_code, tgt_code, 术语干预, 上下文, 保留格式标签)
 
-        messages = [{"role": "user", "content": prompt}]
-        input_ids = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=False,
-            return_tensors="pt"
-        ).to(model.device)
+        # 构造输入：优先使用 apply_chat_template，不支持时手动格式化
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            input_ids = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=False,
+                return_tensors="pt"
+            ).to(model.device)
+        except ValueError:
+            # HY-MT2.0 等没有 chat_template 的模型手动拼接
+            user_token = tokenizer.convert_tokens_to_ids("<｜hy_User｜>")
+            assistant_token = tokenizer.convert_tokens_to_ids("<｜hy_Assistant｜>")
+            text = f"<｜hy_User｜>: {prompt}\n<｜hy_Assistant｜>:"
+            encoded = tokenizer.encode(text, return_tensors="pt")
+            input_ids = encoded.to(model.device)
 
         with torch.no_grad():
             outputs = model.generate(
@@ -208,12 +217,26 @@ class HunyuanTranslatorNode:
 
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        # 提取生成内容（去除 prompt 和系统消息）
-        if "assistant" in output_text:
-            output_text = output_text.split("assistant")[-1].strip()
-        else:
-            # 启发式截断输入部分
-            output_text = output_text[len(prompt):].strip()
+        # 提取生成内容（去除 prompt）
+        try:
+            # 优先尝试按 assistant 分割
+            if "assistant" in output_text:
+                output_text = output_text.split("assistant")[-1].strip()
+            elif "<｜hy_Assistant｜>" in output_text:
+                output_text = output_text.split("<｜hy_Assistant｜>")[-1].strip()
+            elif "<｜hy_EOT｜>" in output_text:
+                # 如果有 EOT 结束符，取最后一个 EOT 之后的内容
+                output_text = output_text.rsplit("<｜hy_EOT｜>", 1)[-1].strip()
+            else:
+                # 启发式截断：去掉输入部分
+                # 由于 prompt 已编码在 input_ids 中，outputs[0] 包含 prompt + generation
+                # 直接取 outputs[0] 长度减去 input_ids 长度作为生成部分
+                gen_len = outputs[0].shape[-1] - input_ids.shape[-1]
+                if gen_len > 0:
+                    gen_ids = outputs[0][input_ids.shape[-1]:]
+                    output_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        except:
+            pass
 
         # 处理格式保留模式
         if 保留格式标签 and output_text.startswith("<target>") and "</target>" in output_text:

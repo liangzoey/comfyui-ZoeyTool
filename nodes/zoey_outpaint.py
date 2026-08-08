@@ -1,5 +1,9 @@
 import torch
 
+# 常见宽高比（外扩比例锁定用）
+_ASPECT = {"16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1.0,
+           "4:3": 4 / 3, "3:4": 3 / 4, "3:2": 3 / 2, "2:3": 2 / 3, "21:9": 21 / 9}
+
 
 def parse_hex_color(hex_str):
     try:
@@ -51,6 +55,8 @@ class ZoeyOutpaintFrame:
                 "填充颜色": ("STRING", {"multiline": False, "default": "#808080"}),
                 "fill_mode": ("BOOLEAN", {"default": True}),
                 "feather": ("INT", {"default": 0, "min": 0, "max": 200, "step": 1}),
+                "ratio_mode": ("BOOLEAN", {"default": False, "label_on": "比例锁定", "label_off": "关闭"}),
+                "target_ratio": (["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"], {"default": "16:9"}),
             }
         }
 
@@ -60,13 +66,31 @@ class ZoeyOutpaintFrame:
     CATEGORY = "Zoey Tool/图像处理"
     OUTPUT_NODE = True
 
-    def outpaint(self, image, frame_left, frame_top, frame_right, frame_bottom, 填充颜色, fill_mode=True, feather=0):
+    def outpaint(self, image, frame_left, frame_top, frame_right, frame_bottom, 填充颜色, fill_mode=True, feather=0,
+                 ratio_mode=False, target_ratio="16:9"):
         fill_rgb = parse_hex_color(填充颜色)
         B, H, W, C = image.shape
         l = int(round(frame_left * W))
         t = int(round(frame_top * H))
         r = int(round(frame_right * W))
         b = int(round(frame_bottom * H))
+
+        # 外扩比例锁定：把画布按中心对齐到目标宽高比
+        if ratio_mode:
+            ratio = _ASPECT.get(target_ratio, 16 / 9)
+            fw = r - l
+            fh = b - t
+            if fw > 0 and fh > 0:
+                cx = (l + r) / 2.0
+                cy = (t + b) / 2.0
+                if fw / fh > ratio:
+                    new_fh = fw / ratio
+                    t = int(round(cy - new_fh / 2.0))
+                    b = int(round(cy + new_fh / 2.0))
+                else:
+                    new_fw = fh * ratio
+                    l = int(round(cx - new_fw / 2.0))
+                    r = int(round(cx + new_fw / 2.0))
 
         fw = r - l
         fh = b - t

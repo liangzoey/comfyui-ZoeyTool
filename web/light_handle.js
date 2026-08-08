@@ -1,11 +1,29 @@
 import { app } from "../../../../scripts/app.js";
 import { VIEWER_HTML } from "./light_handle_3d_viewer.js";
 
+// ── Global onAfterChange guard: register once, not per-node ──
+let _onAfterChangePatched = false;
+
 app.registerExtension({
     name: "zoey.lightHandle",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "ZoeyLightHandle") {
+            // Patch app.graph.onAfterChange exactly once
+            if (!_onAfterChangePatched) {
+                _onAfterChangePatched = true;
+                const orig = app.graph.onAfterChange;
+                app.graph.onAfterChange = function (event) {
+                    if (orig) orig.apply(this, arguments);
+                    // Notify all ZoeyLightHandle nodes to retry image load
+                    for (const n of app.graph._nodes || []) {
+                        if (n.type === "ZoeyLightHandle" && n._retryLoad) {
+                            n._retryLoad();
+                        }
+                    }
+                };
+            }
+
             const onNodeCreated = nodeType.prototype.onNodeCreated;
 
             nodeType.prototype.onNodeCreated = function () {
@@ -14,13 +32,27 @@ app.registerExtension({
 
                 const getW = (name) => node.widgets?.find((w) => w.name === name);
 
-                // ── Debounce ──
-                const debounce = (fn, ms) => {
-                    let timer;
-                    return (...args) => {
-                        clearTimeout(timer);
-                        timer = setTimeout(() => fn(...args), ms);
-                    };
+                // ── Throttled retryLoad per node (called from global onAfterChange) ──
+                let _retryTimer = null;
+                node._retryLoad = () => {
+                    if (_retryTimer) return;
+                    _retryTimer = setTimeout(() => {
+                        _retryTimer = null;
+                        tryLoadFromInput();
+                    }, 300);
+                };
+
+                // ── Batch all deferred work into a single RAF ──
+                let _batchTimer = null;
+                const batchUpdate = () => {
+                    if (_batchTimer) return;
+                    _batchTimer = requestAnimationFrame(() => {
+                        _batchTimer = null;
+                        saveHandlesToJson();
+                        renderHandleBar();
+                        syncViewer();
+                        app.graph.setDirtyCanvas(true, true);
+                    });
                 };
 
                 // ── Flag to prevent widget-change double sync ──
@@ -74,8 +106,8 @@ app.registerExtension({
                     hexLabel.textContent = val.toUpperCase();
                 };
 
-                // ── Debounced operations (avoid jank during rapid input) ──
-                const syncViewer = debounce(() => {
+                // ── Batched update (single RAF per tick) ──
+                const syncViewer = () => {
                     if (!node._viewerReady || !iframe.contentWindow) return;
                     iframe.contentWindow.postMessage({
                         type: "SYNC",
@@ -87,12 +119,13 @@ app.registerExtension({
                         handles: handles,
                         activeIndex: activeHandleIndex,
                     }, "*");
-                }, 30);
-                const saveHandlesToJson = debounce(() => {
+                };
+                const saveHandlesToJson = () => {
                     const w = getW("handles_json");
                     if (w) w.value = JSON.stringify(handles);
-                }, 30);
-                const markDirty = debounce(() => app.graph.setDirtyCanvas(true, true), 50);
+                };
+                const markDirty = () => app.graph.setDirtyCanvas(true, true);
+                const syncNow = () => { saveHandlesToJson(); renderHandleBar(); syncViewer(); markDirty(); };
 
                 colorInput.addEventListener("input", () => {
                     const val = colorInput.value.toUpperCase();
@@ -107,11 +140,11 @@ app.registerExtension({
                     // Update current handle color
                     if (handles.length > 0 && activeHandleIndex < handles.length) {
                         handles[activeHandleIndex].light_color = val;
-                        saveHandlesToJson();
-                        renderHandleBar();
+                        syncNow();
+                    } else {
+                        syncViewer();
+                        markDirty();
                     }
-                    syncViewer();
-                    markDirty();
                 });
 
                 colorBar.addEventListener("click", () => colorInput.click());
@@ -166,10 +199,7 @@ app.registerExtension({
                     };
                     handles.push(h);
                     activeHandleIndex = handles.length - 1;
-                    saveHandlesToJson();
-                    renderHandleBar();
-                    syncViewer();
-                    markDirty();
+                    syncNow();
                 };
 
                 const selectHandle = (idx) => {
@@ -185,25 +215,19 @@ app.registerExtension({
                     const bhW = getW("behind_subject"); if (bhW) bhW.value = h.behind_subject ?? false;
                     const ltW = getW("light_type"); if (ltW) ltW.value = h.light_type ?? "摄影棚灯光";
                     updateSwatch();
-                    renderHandleBar();
-                    syncViewer();
-                    markDirty();
+                    syncNow();
                 };
 
                 const deleteHandle = (idx) => {
                     if (handles.length === 0) return;
                     handles.splice(idx, 1);
                     if (activeHandleIndex >= handles.length) activeHandleIndex = Math.max(0, handles.length - 1);
-                    saveHandlesToJson();
-                    renderHandleBar();
-                    syncViewer();
                     if (handles.length > 0) {
                         selectHandle(activeHandleIndex);
                     } else {
-                        // Reset to defaults
                         activeHandleIndex = -1;
+                        syncNow();
                     }
-                    markDirty();
                 };
 
                 // ── Handle bar ──
@@ -238,57 +262,81 @@ app.registerExtension({
                 handleActions.style.gap = "2px";
                 handleBarContainer.appendChild(handleActions);
 
-                const renderHandleBar = debounce(() => {
-                    handleDots.innerHTML = "";
-                    handleActions.innerHTML = "";
+                // ── Handle bar (DOM-reuse version: no innerHTML = "") ──
+                const _barState = { dots: [], delBtn: null, emptyLabel: null };
+                const renderHandleBar = () => {
+                    const ndots = handles.length;
 
-                    if (handles.length === 0) {
-                        const emptyLabel = document.createElement("span");
-                        emptyLabel.textContent = "无";
-                        emptyLabel.style.fontSize = "10px";
-                        emptyLabel.style.color = "rgba(255,255,255,0.25)";
-                        handleDots.appendChild(emptyLabel);
-                    } else {
-                        handles.forEach((h, i) => {
-                            const dot = document.createElement("div");
-                            dot.style.width = "14px";
-                            dot.style.height = "14px";
-                            dot.style.borderRadius = "50%";
-                            dot.style.backgroundColor = h.light_color || "#FFFFFF";
-                            dot.style.border = i === activeHandleIndex
-                                ? "2px solid #FFD700"
-                                : "1px solid rgba(255,255,255,0.25)";
-                            dot.style.cursor = "pointer";
-                            dot.style.flexShrink = "0";
-                            dot.style.boxSizing = "border-box";
-                            dot.title = `手柄 ${i + 1}`;
-                            dot.addEventListener("click", () => selectHandle(i));
-                            handleDots.appendChild(dot);
-                        });
+                    // Manage "无" empty label
+                    if (ndots === 0) {
+                        if (!_barState.emptyLabel) {
+                            _barState.emptyLabel = document.createElement("span");
+                            _barState.emptyLabel.textContent = "无";
+                            _barState.emptyLabel.style.fontSize = "10px";
+                            _barState.emptyLabel.style.color = "rgba(255,255,255,0.25)";
+                            handleDots.appendChild(_barState.emptyLabel);
+                        }
+                        _barState.emptyLabel.style.display = "";
+                    } else if (_barState.emptyLabel) {
+                        _barState.emptyLabel.style.display = "none";
                     }
 
-                    // Delete button
-                    if (handles.length > 0) {
-                        const delBtn = document.createElement("button");
-                        delBtn.textContent = "✕";
-                        delBtn.title = "删除当前手柄";
-                        delBtn.style.background = "rgba(200,50,50,0.4)";
-                        delBtn.style.border = "1px solid rgba(200,50,50,0.6)";
-                        delBtn.style.borderRadius = "3px";
-                        delBtn.style.color = "#fff";
-                        delBtn.style.fontSize = "10px";
-                        delBtn.style.cursor = "pointer";
-                        delBtn.style.padding = "1px 5px";
-                        delBtn.style.lineHeight = "1.2";
-                        delBtn.addEventListener("click", (e) => {
+                    // Reconcile dot elements to match handles array
+                    while (_barState.dots.length < ndots) {
+                        const dot = document.createElement("div");
+                        dot.style.width = "14px";
+                        dot.style.height = "14px";
+                        dot.style.borderRadius = "50%";
+                        dot.style.cursor = "pointer";
+                        dot.style.flexShrink = "0";
+                        dot.style.boxSizing = "border-box";
+                        dot.style.border = "1px solid rgba(255,255,255,0.25)";
+                        const idx = _barState.dots.length;
+                        dot.addEventListener("click", () => selectHandle(idx));
+                        _barState.dots.push(dot);
+                        handleDots.appendChild(dot);
+                    }
+                    while (_barState.dots.length > ndots) {
+                        const dot = _barState.dots.pop();
+                        dot.remove();
+                    }
+
+                    // Update existing dots (property-only, no DOM creation)
+                    for (let i = 0; i < ndots; i++) {
+                        const dot = _barState.dots[i];
+                        const h = handles[i];
+                        dot.style.backgroundColor = h.light_color || "#FFFFFF";
+                        dot.style.border = i === activeHandleIndex
+                            ? "2px solid #FFD700"
+                            : "1px solid rgba(255,255,255,0.25)";
+                        dot.title = `手柄 ${i + 1}`;
+                    }
+
+                    // Reconcile delete button
+                    if (ndots > 0 && !_barState.delBtn) {
+                        _barState.delBtn = document.createElement("button");
+                        _barState.delBtn.textContent = "✕";
+                        _barState.delBtn.title = "删除当前手柄";
+                        _barState.delBtn.style.background = "rgba(200,50,50,0.4)";
+                        _barState.delBtn.style.border = "1px solid rgba(200,50,50,0.6)";
+                        _barState.delBtn.style.borderRadius = "3px";
+                        _barState.delBtn.style.color = "#fff";
+                        _barState.delBtn.style.fontSize = "10px";
+                        _barState.delBtn.style.cursor = "pointer";
+                        _barState.delBtn.style.padding = "1px 5px";
+                        _barState.delBtn.style.lineHeight = "1.2";
+                        _barState.delBtn.addEventListener("click", (e) => {
                             e.stopPropagation();
                             if (activeHandleIndex >= 0 && activeHandleIndex < handles.length) {
                                 deleteHandle(activeHandleIndex);
                             }
                         });
-                        handleActions.appendChild(delBtn);
+                        handleActions.appendChild(_barState.delBtn);
+                    } else if (ndots === 0 && _barState.delBtn) {
+                        _barState.delBtn.remove();
+                        _barState.delBtn = null;
                     }
-                }, 30);
+                };
 
                 // ── Add Handle button ──
                 const addBtn = document.createElement("button");
@@ -413,18 +461,16 @@ app.registerExtension({
                             handles[activeHandleIndex].y = Math.max(0, Math.min(1, 0.5 - 0.5 * Math.sin(e)));
                             handles[activeHandleIndex].azimuth = data.azimuth;
                             handles[activeHandleIndex].elevation = data.elevation;
-                            saveHandlesToJson();
                         }
                         updateSwatch();
-                        markDirty();
+                        batchUpdate();
                     } else if (data.type === "BALL_SIZE_UPDATE") {
                         const bsW = getW("ball_size");
                         if (bsW) bsW.value = data.ballSize;
                         if (activeHandleIndex >= 0 && activeHandleIndex < handles.length) {
                             handles[activeHandleIndex].ball_size = data.ballSize;
-                            saveHandlesToJson();
                         }
-                        markDirty();
+                        batchUpdate();
                     }
                 };
                 window.addEventListener("message", onMessage);
@@ -584,15 +630,12 @@ app.registerExtension({
                             else if (name === "intensity") handles[activeHandleIndex].intensity = value;
                             else if (name === "behind_subject") handles[activeHandleIndex].behind_subject = value;
                             else if (name === "light_type") handles[activeHandleIndex].light_type = value;
-                            saveHandlesToJson();
-                            renderHandleBar();
                         }
-                        syncViewer();
+                        batchUpdate();
                     }
                     if (name === "handle_shape") {
                         if (activeHandleIndex >= 0 && activeHandleIndex < handles.length) {
                             handles[activeHandleIndex].handle_shape = value;
-                            saveHandlesToJson();
                         }
                         if (node._viewerReady && iframe.contentWindow) {
                             iframe.contentWindow.postMessage({
@@ -602,6 +645,7 @@ app.registerExtension({
                                 activeIndex: activeHandleIndex,
                             }, "*");
                         }
+                        batchUpdate();
                     }
                 };
 
@@ -616,15 +660,6 @@ app.registerExtension({
                     }, 100);
                 });
                 resizeObserver.observe(iframe);
-
-                // ── Global graph change listener ──
-                app.graph.onAfterChange = (() => {
-                    const orig = app.graph.onAfterChange;
-                    return function (event) {
-                        if (orig) orig.apply(this, arguments);
-                        setTimeout(() => retryLoad(5, 500), 100);
-                    };
-                })();
 
                 // ── Cleanup ──
                 const origOnRemoved = this.onRemoved;

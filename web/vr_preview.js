@@ -37,31 +37,36 @@ function injectStyles() {
             height: 100% !important;
             display: block !important;
         }
-        /* 关闭按钮 */
+        /* 关闭按钮（浮在 VR 右上角） */
         .zoey-vr-close-btn {
             position: absolute;
-            top: -40px;
-            right: 0;
-            padding: 8px 16px;
-            background: #ff4444;
+            top: 8px;
+            right: 8px;
+            z-index: 10;
+            padding: 6px 14px;
+            background: rgba(255, 60, 60, 0.85);
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 13px;
+            transition: background 0.2s;
         }
         .zoey-vr-close-btn:hover {
             background: #ff0000;
         }
-        /* 标题 */
+        /* 标题（浮在 VR 左上角） */
         .zoey-vr-title {
             position: absolute;
-            top: -40px;
-            left: 0;
+            top: 10px;
+            left: 14px;
+            z-index: 10;
             color: white;
-            font-size: 18px;
+            font-size: 16px;
             font-weight: bold;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+            pointer-events: none;
         }
     `;
     document.head.appendChild(style);
@@ -157,10 +162,7 @@ function openVRPopup(src) {
     overlay.appendChild(container);
     document.body.appendChild(overlay);
 
-    // 点击遮罩关闭
-    overlay.onclick = (e) => {
-        if (e.target === overlay) closeVR();
-    };
+    // 仅关闭按钮可退出（避免误触遮罩区域）
     closeBtn.onclick = closeVR;
 
     function closeVR() {

@@ -267,10 +267,11 @@ class ZoeyLightHandle:
             "light_type": light_type,
         }]
 
-    def _draw_all_handles(self, img_tensor, width, height, handles):
-        """Draw all handles on the image preview."""
+    def _draw_all_handles(self, img_tensor, width, height, handles, combined_mask=None, sub_mask_tensor=None, subject_rgba_pil=None):
         img_np = (255. * img_tensor.cpu().numpy()).clip(0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np).convert('RGBA')
+
+        # Step 1: Draw handle shapes on original image
         overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
@@ -301,17 +302,35 @@ class ZoeyLightHandle:
                 draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3],
                     fill=(cr, cg, cb, alpha))
 
+        # Step 2: Composite handles onto original → handles appear ON TOP of image
         base_with_handle = Image.alpha_composite(pil_img, overlay)
 
-        # Behind-subject compositing (uses first handle's behind_subject flag)
+        # Step 3: Behind-subject → paste subject back on top, so handles appear BEHIND subject
         behind = handles[0].get('behind_subject', False) if handles else False
         if behind:
-            # Simplified: behind-subject for preview requires subject_mask
-            # (the actual mask computation handles this in generate())
-            pass
+            if subject_rgba_pil is not None:
+                # Rembg output: RGBA with transparent background, composite directly
+                if subject_rgba_pil.size != (width, height):
+                    subject_rgba_pil = subject_rgba_pil.resize((width, height), Image.BILINEAR)
+                if subject_rgba_pil.mode != 'RGBA':
+                    subject_rgba_pil = subject_rgba_pil.convert('RGBA')
+                result = Image.alpha_composite(base_with_handle, subject_rgba_pil)
+            elif sub_mask_tensor is not None:
+                # External mask: extract subject from original using PIL paste
+                sub_np = sub_mask_tensor.cpu().numpy() if hasattr(sub_mask_tensor, 'cpu') else np.array(sub_mask_tensor)
+                sub_np = np.clip(sub_np, 0, 1)
+                mask_uint8 = (sub_np * 255).astype(np.uint8)
+                mask_pil = Image.fromarray(mask_uint8).resize((width, height), Image.BILINEAR)
+                subject_only = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+                subject_only.paste(pil_img, (0, 0), mask_pil)
+                result = Image.alpha_composite(base_with_handle, subject_only)
+            else:
+                result = base_with_handle
+        else:
+            result = base_with_handle
 
         return torch.from_numpy(
-            np.array(base_with_handle.convert('RGB')).astype(np.float32) / 255.0
+            np.array(result.convert('RGB')).astype(np.float32) / 255.0
         ).unsqueeze(0)
 
     def generate(self, image, azimuth, elevation, ball_size, handle_shape="圆形", light_color="#FFFFFF", intensity=5.0, subject_mask=None, behind_subject=False, handles_json="[]", light_type="摄影棚灯光"):
@@ -343,20 +362,33 @@ class ZoeyLightHandle:
 
         # Behind-subject compositing for mask (use first handle's flag)
         h_behind = handles[0].get('behind_subject', False) if handles else behind_subject
+        sub_mask_tensor = None
+        subject_rgba_pil = None  # Full RGBA subject image from rembg (for preview compositing)
         if h_behind:
-            sub_mask_tensor = None
             if subject_mask is not None:
                 sm = subject_mask
                 while sm.dim() > 2:
                     sm = sm[0]
                 sub_mask_tensor = sm
             elif HAS_REMBG:
+                logger.info("ZoeyLightHandle behind_subject=True, using rembg auto subject detection")
                 ensure_rmbg_model()
                 img_np_for_mask = (255. * img.cpu().numpy()).clip(0, 255).astype(np.uint8)
                 pil_rgb = Image.fromarray(img_np_for_mask)
-                mask_img = remove(pil_rgb, model_path=RMBG_MODEL_PATH,
-                    only_mask=True, post_process_mask=True).convert("L")
-                mask_arr = np.array(mask_img).astype(np.float32) / 255.0
+                # Get subject RGBA image (transparent background) for compositing
+                subject_rgba_pil = remove(pil_rgb, model_path=RMBG_MODEL_PATH,
+                    only_mask=False, post_process_mask=True)
+                if subject_rgba_pil.mode != 'RGBA':
+                    subject_rgba_pil = subject_rgba_pil.convert('RGBA')
+                # Extract mask from alpha channel
+                alpha_ch = subject_rgba_pil.split()[-1]
+                mask_arr = np.array(alpha_ch).astype(np.float32) / 255.0
+                logger.info(
+                    "ZoeyLightHandle rembg alpha stats: min=%.2f max=%.2f "
+                    "mode=%s size=%s vs img=(%d,%d)",
+                    float(mask_arr.min()), float(mask_arr.max()),
+                    subject_rgba_pil.mode, subject_rgba_pil.size, width, height
+                )
                 sub_mask_tensor = torch.from_numpy(mask_arr)
 
             if sub_mask_tensor is not None:
@@ -366,14 +398,22 @@ class ZoeyLightHandle:
                     sub_mask_tensor = torch.from_numpy(
                         np.array(sub_pil).astype(np.float32)) / 255.0
                 combined_mask = combined_mask * (1.0 - sub_mask_tensor)
+            else:
+                logger.warning(
+                    "ZoeyLightHandle: behind_subject=True 但没有主体遮罩可用。"
+                    "请连接 subject_mask 输入，或安装 rembg: pip install rembg"
+                )
 
         light_mask = combined_mask.unsqueeze(0).to(torch.float32)
 
         # Coordinate prompt
         prompt = self._build_coord_string(coord_items, width, height)
 
-        # Annotated image with all handles drawn
-        annotated = self._draw_all_handles(img, width, height, handles)
+        # Annotated image with all handles drawn (behind-subject compositing if enabled)
+        annotated = self._draw_all_handles(img, width, height, handles,
+            combined_mask=combined_mask if h_behind else None,
+            sub_mask_tensor=sub_mask_tensor if h_behind else None,
+            subject_rgba_pil=subject_rgba_pil if h_behind else None)
 
         # Frontend preview: ORIGINAL image (JS draws interactive handles)
         image_base64 = ""

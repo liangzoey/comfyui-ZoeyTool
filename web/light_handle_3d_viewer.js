@@ -515,8 +515,10 @@ window.addEventListener('message', function(e) {
   if (!d || !d.type) return;
 
   if (d.type === 'INIT' || d.type === 'SYNC') {
-    if (d.azimuth !== undefined) azimuth = d.azimuth;
-    if (d.elevation !== undefined) elevation = d.elevation;
+    // While dragging (mouse or touch), skip azimuth/elevation from SYNC to avoid feedback-loop jitter
+    var isInteracting = isDragging || touchId !== null;
+    if (!isInteracting && d.azimuth !== undefined) azimuth = d.azimuth;
+    if (!isInteracting && d.elevation !== undefined) elevation = d.elevation;
     if (d.lightColor) setOrbColor(d.lightColor);
     if (d.ballSize !== undefined) updateOrbSize(d.ballSize);
     if (d.handleShape) setSpotShape(d.handleShape);

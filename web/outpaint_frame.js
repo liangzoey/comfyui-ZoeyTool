@@ -24,7 +24,7 @@ app.registerExtension({
             const getW = (name) => node.widgets?.find(w => w.name === name);
 
             // ── Hide raw widgets ──
-            ["frame_left", "frame_top", "frame_right", "frame_bottom", "填充颜色", "fill_mode", "feather"].forEach(name => {
+            ["frame_left", "frame_top", "frame_right", "frame_bottom", "填充颜色", "fill_mode", "feather", "ratio_mode", "target_ratio"].forEach(name => {
                 const w = getW(name);
                 if (w) {
                     w.computeSize = () => [0, 0];
@@ -45,6 +45,8 @@ app.registerExtension({
                 fill: getW("填充颜色")?.value ?? "#808080",
                 fillMode: getW("fill_mode")?.value ?? true,
                 feather: getW("feather")?.value ?? 0,
+                ratioMode: getW("ratio_mode")?.value ?? false,
+                ratio: getW("target_ratio")?.value ?? "16:9",
                 mode: null, mx0: 0, my0: 0, frame0: null, lastInfo: null, _hits: null,
             };
             node._opState = s;
@@ -140,6 +142,39 @@ app.registerExtension({
                 draw();
             });
 
+            // ── 外扩比例锁定 ──
+            const ratioBtn = document.createElement("button");
+            ratioBtn.textContent = "⤢ 比例";
+            ratioBtn.title = s.ratioMode ? "外扩比例锁定：开启" : "外扩比例锁定：关闭";
+            ratioBtn.style.cssText = `font-size:11px;padding:0 6px;border:1px solid ${s.ratioMode ? "#4fc3f7" : "#555"};border-radius:4px;background:${s.ratioMode ? "#0d3b5e" : "#2a2a3e"};color:${s.ratioMode ? "#4fc3f7" : "#888"};cursor:pointer;height:26px;line-height:26px;flex:none;`;
+            const ratioSel = document.createElement("select");
+            ratioSel.style.cssText = "font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:4px;height:26px;flex:none;";
+            ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"].forEach(r => {
+                const o = document.createElement("option");
+                o.value = r; o.textContent = r;
+                ratioSel.appendChild(o);
+            });
+            ratioSel.value = s.ratio;
+            ratioSel.style.display = s.ratioMode ? "" : "none";
+
+            ratioBtn.addEventListener("click", () => {
+                s.ratioMode = !s.ratioMode;
+                ratioBtn.style.borderColor = s.ratioMode ? "#4fc3f7" : "#555";
+                ratioBtn.style.color = s.ratioMode ? "#4fc3f7" : "#888";
+                ratioBtn.style.background = s.ratioMode ? "#0d3b5e" : "#2a2a3e";
+                ratioSel.style.display = s.ratioMode ? "" : "none";
+                const rw = getW("ratio_mode");
+                if (rw) { rw.value = s.ratioMode; if (rw.callback) rw.callback(s.ratioMode); }
+                if (s.ratioMode) snapRatio();
+                syncW(); draw();
+            });
+            ratioSel.addEventListener("change", () => {
+                s.ratio = ratioSel.value;
+                const tw = getW("target_ratio");
+                if (tw) { tw.value = s.ratio; if (tw.callback) tw.callback(s.ratio); }
+                if (s.ratioMode) { snapRatio(); syncW(); draw(); }
+            });
+
             bar.appendChild(reloadBtn);
             bar.appendChild(fitBtn);
             bar.appendChild(fillBtn);
@@ -150,6 +185,8 @@ app.registerExtension({
             bar.appendChild(featherLbl);
             bar.appendChild(featherSlider);
             bar.appendChild(featherVal);
+            bar.appendChild(ratioBtn);
+            bar.appendChild(ratioSel);
             root.appendChild(bar);
 
             // ── Button events ──
@@ -373,6 +410,22 @@ app.registerExtension({
             }
             const CURS = { nw:"nwse-resize", n:"ns-resize", ne:"nesw-resize", e:"ew-resize", se:"nwse-resize", s:"ns-resize", sw:"nesw-resize", w:"ew-resize" };
 
+            // ── 外扩比例锁定：按中心把画布对齐到目标宽高比（归一化坐标，考虑图像宽高比） ──
+            function parseRatio(str) {
+                const m = /(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/.exec(str || "");
+                return m ? parseFloat(m[1]) / parseFloat(m[2]) : 16 / 9;
+            }
+            function snapRatio() {
+                if (!s.imgAspect || !s.ratioMode) return;
+                const R = parseRatio(s.ratio) / s.imgAspect; // 目标比例换算到归一化帧比例
+                const cx = (s.fl + s.fr) / 2, cy = (s.ft + s.fb) / 2;
+                const w = s.fr - s.fl, h = s.fb - s.ft;
+                let nw = w, nh = h;
+                if (w / h > R) nh = w / R; else nw = h * R;
+                s.fl = cx - nw / 2; s.fr = cx + nw / 2;
+                s.ft = cy - nh / 2; s.fb = cy + nh / 2;
+            }
+
             cv.addEventListener("mousedown", (e) => {
                 const rect = cv.getBoundingClientRect();
                 const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -412,8 +465,11 @@ app.registerExtension({
                     case "sw": s.fl = Math.min(p.nx, f0.fr - MIN); s.fb = Math.max(p.ny, f0.ft + MIN); break;
                     case "se": s.fr = Math.max(p.nx, f0.fl + MIN); s.fb = Math.max(p.ny, f0.ft + MIN); break;
                 }
-                // Crop mode: clamp to image
-                if (!s.fillMode) {
+                // 比例锁定：按中心对齐目标比例（允许超出图像边界以完成外扩）
+                if (s.ratioMode) {
+                    snapRatio();
+                } else if (!s.fillMode) {
+                    // Crop mode: clamp to image
                     s.fl = Math.max(0, Math.min(1, s.fl));
                     s.ft = Math.max(0, Math.min(1, s.ft));
                     s.fr = Math.max(0, Math.min(1, s.fr));
@@ -542,7 +598,14 @@ app.registerExtension({
                 st.fill = getW("填充颜色")?.value ?? st.fill;
                 st.fillMode = getW("fill_mode")?.value ?? st.fillMode;
                 st.feather = getW("feather")?.value ?? st.feather;
-                if (!st.fillMode) {
+                st.ratioMode = getW("ratio_mode")?.value ?? st.ratioMode;
+                st.ratio = getW("target_ratio")?.value ?? st.ratio;
+                ratioBtn.style.borderColor = st.ratioMode ? "#4fc3f7" : "#555";
+                ratioBtn.style.color = st.ratioMode ? "#4fc3f7" : "#888";
+                ratioBtn.style.background = st.ratioMode ? "#0d3b5e" : "#2a2a3e";
+                ratioSel.value = st.ratio;
+                ratioSel.style.display = st.ratioMode ? "" : "none";
+                if (!st.fillMode && !st.ratioMode) {
                     st.fl = Math.max(0, Math.min(1, st.fl));
                     st.ft = Math.max(0, Math.min(1, st.ft));
                     st.fr = Math.max(0, Math.min(1, st.fr));
