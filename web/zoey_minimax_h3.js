@@ -7,6 +7,54 @@ import { ComfyWidgets } from "../../../../scripts/widgets.js";
 import { addWidget, DOMWidgetImpl } from "../../../../scripts/domWidget.js";
 import { $el } from "../../../../scripts/ui.js";
 
+// ---- 永久全局素材库（跨工作流，存 <ComfyUI>/input/zoey_library/） ----
+let globalLibrary = [];
+let globalLibraryLoaded = false;
+let globalLibraryLoading = null;
+
+async function loadGlobalLibrary() {
+  if (globalLibraryLoading) return globalLibraryLoading;
+  globalLibraryLoading = (async () => {
+    try {
+      const r = await api.fetchApi("/zoey/library");
+      const d = await r.json();
+      globalLibrary = Array.isArray(d.entries) ? d.entries : [];
+    } catch (e) {
+      console.error("[Zoey MiniMax H3] loadGlobalLibrary:", e);
+      globalLibrary = [];
+    }
+    globalLibraryLoaded = true;
+    globalLibraryLoading = null;
+    document.dispatchEvent(new CustomEvent("zoey:library-loaded"));
+    return globalLibrary;
+  })();
+  return globalLibraryLoading;
+}
+
+function libraryMediaUrl(file) {
+  if (!file) return null;
+  const p = new URLSearchParams({ filename: file, type: "input", subfolder: "zoey_library" });
+  p.set("t", String(Date.now()));
+  return api.apiURL(`/view?${p.toString()}`);
+}
+
+let saveLibraryTimer = null;
+async function saveLibrary() {
+  try {
+    await api.fetchApi("/zoey/library/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: globalLibrary }),
+    });
+  } catch (e) {
+    console.error("[Zoey MiniMax H3] saveLibrary:", e);
+  }
+}
+function scheduleSaveLibrary() {
+  if (saveLibraryTimer) clearTimeout(saveLibraryTimer);
+  saveLibraryTimer = setTimeout(saveLibrary, 500);
+}
+
 const NODE_TYPE = "ZoeyMiniMaxH3ReferenceToVideo";
 const EXT_NAME = "Zoey.MiniMaxH3.RefPicker";
 
@@ -135,6 +183,36 @@ const STYLE = `
   padding: 4px 6px;
   white-space: nowrap;
 }
+/* ---- @ 缩略图悬停大图预览 ---- */
+.zoey-ref-hover {
+  position: fixed;
+  z-index: 999999; /* 高于 @ 选择下拉(99999) */
+  pointer-events: none;
+  display: none;
+  background: rgba(15, 15, 15, .96);
+  border: 1px solid var(--border-color, #555);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .6);
+  max-width: 72vw;
+  max-height: 72vh;
+  overflow: hidden;
+}
+.zoey-ref-hover-img {
+  display: block;
+  max-width: 72vw;
+  max-height: 72vh;
+  object-fit: contain;
+}
+.zoey-ref-hover-audio {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 240px;
+  height: 140px;
+  font-size: 40px;
+  color: #aaa;
+  user-select: none;
+}
 /* ---- 富文本 prompt 编辑器（含下方预览条，合并为一个控件避免 widgets_values 错位） ---- */
 .zoey-prompt-container {
   --comfy-widget-height: 170px;
@@ -251,12 +329,13 @@ const STYLE = `
 }
 /* ---- 导演台（分镜列表） ---- */
 .zoey-director {
-  --comfy-widget-height: 260px;
+  --comfy-widget-height: 380px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 4px 6px;
   box-sizing: border-box;
+  overflow-y: auto;
 }
 .zoey-director-header {
   display: flex;
@@ -300,9 +379,7 @@ const STYLE = `
   pointer-events: none;
 }
 .zoey-director-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -386,6 +463,325 @@ const STYLE = `
   opacity: .8;
   color: var(--input-text, #ddd);
 }
+/* ---- 导演台增强：景别/运镜按钮、角色槽、说话人、对白、音效配乐、编译预览 ---- */
+.zoey-director-camrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.zoey-director-camrow .cam-label {
+  font-size: 10px;
+  opacity: .6;
+  align-self: center;
+  margin-right: 2px;
+}
+.zoey-director-camrow button {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #3a3a3a;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+}
+.zoey-director-camrow button:hover {
+  border-color: #7ec8ff;
+}
+.zoey-director-chars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.zoey-director-char {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoey-director-char-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid #3a3a3a;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-family: monospace;
+  flex: 0 0 34px;
+  box-sizing: border-box;
+  padding: 0;
+}
+.zoey-director-char-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.zoey-director-char-btn:hover {
+  border-color: #7ec8ff;
+}
+.zoey-director-char input {
+  width: 72px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.zoey-director-mini-btn {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid #444;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  line-height: 14px;
+}
+.zoey-director-mini-btn:hover {
+  border-color: #7ec8ff;
+}
+.zoey-director-collapse {
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .03);
+}
+.zoey-director-collapse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.zoey-director-collapse-head .caret {
+  color: #7ec8ff;
+}
+.zoey-director-collapse-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 4px 4px;
+}
+.zoey-director-speaker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoey-director-speaker .zoey-director-spk-id {
+  font-family: monospace;
+  font-size: 11px;
+  color: #7ec8ff;
+  width: 28px;
+  flex: 0 0 28px;
+}
+.zoey-director-speaker input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.zoey-director-dlg {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.zoey-director-dlg select,
+.zoey-director-dlg input {
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 3px;
+}
+.zoey-director-dlg .spk {
+  width: 50px;
+}
+.zoey-director-dlg .lang {
+  width: 66px;
+}
+.zoey-director-dlg .txt {
+  flex: 1;
+  min-width: 0;
+}
+.zoey-director-dlg .del {
+  color: #f88;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+}
+.zoey-director-preview {
+  width: 100%;
+  min-height: 56px;
+  max-height: 120px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .35);
+  color: #9ec7ff;
+  font-size: 10px;
+  font-family: monospace;
+  line-height: 1.4;
+  padding: 3px 5px;
+}
+.zoey-director-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.zoey-director-field label {
+  font-size: 10px;
+  opacity: .7;
+}
+.zoey-director-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 5px;
+}
+.zoey-director-dlgadd {
+  align-self: flex-start;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px dashed #555;
+  background: none;
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+}
+.zoey-director-dlgadd:hover {
+  border-color: #7ec8ff;
+}
+.zoey-director-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.zoey-director-toolbar .tool-label {
+  font-size: 10px;
+  opacity: .6;
+}
+.zoey-director-toolbar button {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid #3a3a3a;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  line-height: 14px;
+}
+.zoey-director-toolbar button:hover {
+  border-color: #7ec8ff;
+}
+.zoey-director-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  user-select: none;
+}
+.zoey-director-toggle input {
+  accent-color: #7ec8ff;
+  margin: 0;
+}
+/* ---- 素材库（角色/道具/场景/音频） ---- */
+.zoey-library {
+  --comfy-widget-height: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  box-sizing: border-box;
+}
+.zoey-library-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zoey-library-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.zoey-library-row select {
+  width: 44px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 2px;
+}
+.zoey-library-slot {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #3a3a3a;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-family: monospace;
+  padding: 0;
+  box-sizing: border-box;
+}
+.zoey-library-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.zoey-library-slot:hover {
+  border-color: #7ec8ff;
+}
+.zoey-library-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--input-text, #ddd);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.zoey-library-row input.lib-desc {
+  flex: 1.2;
+}
+.zoey-library-hint {
+  font-size: 11px;
+  opacity: .6;
+  padding: 4px 2px;
+  color: var(--input-text, #ddd);
+}
 `;
 
 // ---- 收集已连接的参考素材 ----
@@ -460,12 +856,50 @@ function collectEntries(node) {
   paired.forEach((r, i) => entries.push(makeEntry(r, "音频", "audio", `@A${i + 1}`, `视频${r.slot + 1} 音轨`, i + 1)));
   const audioStart = paired.length + 1;
   audios.forEach((r, i) => entries.push(makeEntry(r, "音频", "audio", `@A${audioStart + i}`, "独立音频", audioStart + i)));
+
+  // 角色槽 @C（导演台定义）：条目指向其分配的参考图，供 chip/下拉/悬停预览使用
+  const chars = node._zoeyDirector?.characters || [];
+  chars.forEach((ch, i) => {
+    if (!ch || ch.slot == null) return;
+    const refEntry = entries.find((e) => e.slot === ch.slot && e.mediaType === "image");
+    const name = (ch.name || "").trim();
+    if (refEntry) {
+      entries.push({ ...refEntry, kind: "角色", mediaType: "image", tag: `@C${i + 1}`, hint: name || `角色 ${i + 1}`, num: i + 1 });
+    } else {
+      entries.push({ ref: null, kind: "角色", mediaType: "image", tag: `@C${i + 1}`, hint: (name || `角色 ${i + 1}`) + "（未连接图片）", num: i + 1, slot: null, filename: null, srcType: null, src: null });
+    }
+  });
+
+  // 素材库 @L（永久全局：角色/道具/场景/音频）
+  const lib = globalLibrary;
+  lib.forEach((entry, i) => {
+    if (!entry || typeof entry !== "object") return;
+    const isAudio = entry.kind === "audio";
+    const name = (entry.name || "").trim();
+    const desc = (entry.desc || "").trim();
+    const file = isAudio ? (entry.audio_file || entry.file) : entry.file;
+    if (!file) {
+      entries.push({
+        ref: null, kind: "素材", mediaType: isAudio ? "audio" : "image", tag: `@L${i + 1}`,
+        hint: (name || `素材 ${i + 1}`) + "（未上传）", num: i + 1,
+        slot: null, filename: null, srcType: null, src: null,
+      });
+      return;
+    }
+    entries.push({
+      ref: null, kind: "素材", mediaType: isAudio ? "audio" : "image", tag: `@L${i + 1}`,
+      hint: (name || `素材 ${i + 1}`) + (desc ? ` · ${desc}` : ""), num: i + 1,
+      slot: null, filename: `zoey_library/${file}`, srcType: null, src: null,
+    });
+  });
   return entries;
 }
 
 function makeEntry(ref, kind, mediaType, tag, hint, num) {
   const src = getSourceInfo(ref.input);
-  return { ref, kind, mediaType, tag, hint, num, filename: src?.filename ?? null, srcType: src?.srcType ?? null, src: src?.src ?? null };
+  const m = (ref.input?.name || "").match(/^(ref_image|ref_video|ref_audio|ref_video_audio)_(\d+)$/);
+  const slot = m ? +m[2] : null;
+  return { ref, kind, mediaType, tag, hint, num, slot, filename: src?.filename ?? null, srcType: src?.srcType ?? null, src: src?.src ?? null };
 }
 
 // ---- 分辨率/时长计算（与后端 zoey_minimax_h3.py 保持一致） ----
@@ -557,7 +991,71 @@ function entryThumb(entry) {
   } else {
     box.textContent = "🔊";
   }
+  attachHover(box, entry);
   return box;
+}
+
+// ---- @ 缩略图悬停大图预览 ----
+const HoverPreview = (() => {
+  let el, img, audio, visible = false;
+  let lastX = 0, lastY = 0;
+  function ensure() {
+    if (el) return;
+    el = $el("div", { className: "zoey-ref-hover" });
+    img = $el("img", { className: "zoey-ref-hover-img" });
+    audio = $el("div", { className: "zoey-ref-hover-audio", textContent: "🔊" });
+    el.append(img, audio);
+    document.body.appendChild(el);
+    document.addEventListener("mousemove", (e) => {
+      lastX = e.clientX; lastY = e.clientY;
+      if (visible) place();
+    });
+    document.addEventListener("pointerdown", () => hide());
+  }
+  function place() {
+    const pad = 14;
+    let x = lastX + pad, y = lastY + pad;
+    const r = el.getBoundingClientRect();
+    if (x + r.width > window.innerWidth - 8) x = lastX - r.width - pad;
+    if (y + r.height > window.innerHeight - 8) y = lastY - r.height - pad;
+    el.style.left = `${Math.max(8, x)}px`;
+    el.style.top = `${Math.max(8, y)}px`;
+  }
+  function hide() {
+    visible = false;
+    if (el) el.style.display = "none";
+  }
+  return {
+    show(entry, x, y) {
+      ensure();
+      lastX = x ?? lastX; lastY = y ?? lastY;
+      visible = true;
+      if (entry?.mediaType === "audio") {
+        img.style.display = "none";
+        audio.style.display = "flex";
+      } else {
+        audio.style.display = "none";
+        const url = entry ? resolveThumbSrc(entry) : null;
+        if (url) {
+          img.style.display = "block";
+          img.src = url;
+        } else {
+          img.style.display = "none";
+        }
+      }
+      el.style.display = "block";
+      place();
+    },
+    hide,
+  };
+})();
+
+// 给任意缩略图元素绑定悬停大图（chip / 预览条 / @ 下拉条目）
+function attachHover(elNode, entry) {
+  elNode.addEventListener("mouseenter", (e) => {
+    HoverPreview.show(entry, e.clientX, e.clientY);
+  });
+  elNode.addEventListener("mouseleave", () => HoverPreview.hide());
 }
 
 // ---- 富文本 prompt 的 chip 渲染 / 串行化 ----
@@ -588,6 +1086,7 @@ function makeChip(tag, entry) {
   label.className = "zoey-prompt-chip-tag";
   label.textContent = tag;
   chip.append(media, label);
+  if (entry) attachHover(chip, entry);
   return chip;
 }
 
@@ -595,7 +1094,7 @@ function renderPrompt(el, text, node) {
   const entries = collectEntries(node);
   const byTag = new Map(entries.map((e) => [e.tag, e]));
   const frag = document.createDocumentFragment();
-  const re = /(@[PpVvAa]\d+)/g;
+  const re = /(@[PpVvAaCcLl]\d+)/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
     if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -667,6 +1166,7 @@ function createPromptEditor(node, name, inputData) {
 
   editor.addEventListener("paste", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     const text = e.clipboardData?.getData("text/plain") ?? "";
     insertTextAtCaret(editor, text);
   });
@@ -802,6 +1302,290 @@ function createDurationWidget(node, name, inputData) {
 
 // ---- 导演台（分镜列表）控件 ----
 const MAX_TOTAL_SECONDS = 15;
+const MAX_CHARACTERS = 4;
+const MAX_SPEAKERS = 5;
+const SPEAKER_IDS = ["S1", "S2", "S3", "S4", "S5"];
+
+// 景别/运镜/转场预设（语汇来自 MiniMax H3 官方运镜词表）
+const SHOT_SIZE_PRESETS = [
+  { label: "特写", text: "a close-up shot" },
+  { label: "近景", text: "a medium close-up shot" },
+  { label: "中景", text: "a medium shot" },
+  { label: "全景", text: "a wide shot" },
+  { label: "远景", text: "a long shot" },
+];
+const CAMERA_PRESETS = [
+  { label: "推", text: "The camera pushes in with small amplitude at slow speed." },
+  { label: "拉", text: "The camera pulls out with small amplitude at slow speed." },
+  { label: "摇左", text: "The camera pans left with small amplitude at slow speed." },
+  { label: "摇右", text: "The camera pans right with small amplitude at slow speed." },
+  { label: "横移左", text: "The camera trucks left with small amplitude at slow speed." },
+  { label: "横移右", text: "The camera trucks right with small amplitude at slow speed." },
+  { label: "升降", text: "The camera pedestals up with small amplitude at slow speed." },
+  { label: "环绕", text: "The camera arcs around the subject with small amplitude at slow speed." },
+  { label: "跟随", text: "A tracking shot follows the moving subject." },
+  { label: "俯拍", text: "The camera looks down at the subject from above." },
+  { label: "仰拍", text: "A low-angle shot frames the subject from below." },
+  { label: "静态", text: "The camera holds a static shot." },
+  { label: "POV", text: "A POV shot from the subject's perspective." },
+  { label: "微抖", text: "The camera shakes slightly." },
+];
+const TRANSITION_PRESETS = ["", "cut", "hard cut", "WHIP PAN", "cross-dissolve", "fade", "wipe", "match cut"];
+
+// 参考用途一键标注（语汇来自官方手册"参考用途清单"）
+const REF_PURPOSES = [
+  "是人物参考（锁定脸和服装）",
+  "是场景参考（背景完全一致）",
+  "是风格参考（匹配这种美术风格）",
+  "是构图参考（匹配这个取景）",
+  "是物体参考（保持这件物品原样）",
+  "是首帧参考",
+  "是尾帧参考",
+  "是动作参考（沿用它的动作）",
+];
+
+// 镜头模板库：一键追加一组分镜
+const SHOT_TEMPLATES = [
+  { name: "产品广告", shots: [
+    { prompt: "@P1 产品特写，缓慢推镜，金属质感与光影细节，桌面倒影", duration: 5, transition: "", dialogue: [] },
+    { prompt: "产品在真实场景中使用，背景柔和虚化，光线自然，突出质感", duration: 5, transition: "cross-dissolve", dialogue: [] },
+    { prompt: "产品与品牌元素同框收尾，构图工整，产品清晰定格", duration: 5, transition: "fade", dialogue: [] },
+  ]},
+  { name: "角色剧情", shots: [
+    { prompt: "全景建立场景，@C1 走入画面，保持脸和服装一致", duration: 5, transition: "", dialogue: [] },
+    { prompt: "中景 @C1 说话并做关键动作，情绪到位", duration: 5, transition: "cut", dialogue: [{ speaker: "S1", lang: "English", text: "" }] },
+    { prompt: "近景 @C1 反应特写，表情变化，安静收尾", duration: 5, transition: "cut", dialogue: [] },
+  ]},
+  { name: "转场节奏", shots: [
+    { prompt: "静态开场，主体缓慢入画，构图留白", duration: 4, transition: "", dialogue: [] },
+    { prompt: "动作爆发，快速运动，冲击力强", duration: 4, transition: "WHIP PAN", dialogue: [] },
+    { prompt: "收束定格，主体稳定，画面安静", duration: 4, transition: "WHIP PAN", dialogue: [] },
+  ]},
+  { name: "音乐MV", shots: [
+    { prompt: "@C1 特写，跟随节奏轻摆，霓虹光晕", duration: 5, transition: "", dialogue: [] },
+    { prompt: "@C1 全景在场景中舞动，镜头环绕慢速", duration: 5, transition: "cut", dialogue: [] },
+    { prompt: "@C1 近景对嘴型，情绪高潮，落幅定格", duration: 5, transition: "fade", dialogue: [] },
+  ]},
+  { name: "单镜头", shots: [
+    { prompt: "", duration: 5, transition: "", dialogue: [] },
+  ]},
+];
+
+// 参考用途按钮插入到当前（或上次）聚焦的富文本编辑器光标处
+let lastRefEditor = null;
+function getFocusedEditor() {
+  let el = document.activeElement;
+  while (el && !el.isContentEditable) el = el.parentElement;
+  return el && el.isContentEditable ? el : lastRefEditor;
+}
+function applyPurpose(text) {
+  const ed = getFocusedEditor();
+  if (!ed) return;
+  appendToEditor(ed, text);
+}
+
+// 角色槽 -> 已连接图片槽位对应的 <Picture K> 编号（图片按连接顺序编号，与后端一致）
+function pictureNumberForSlot(node, slot) {
+  const connected = [];
+  for (const input of node.inputs || []) {
+    if (input.link == null) continue;
+    const m = input.name?.match(/^ref_image_(\d+)$/);
+    if (m) connected.push(+m[1]);
+  }
+  connected.sort((a, b) => a - b);
+  const idx = connected.indexOf(slot);
+  return idx >= 0 ? idx + 1 : null;
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  const mm = String(Math.floor(s)).padStart(2, "0");
+  const ms = Math.round((s - Math.floor(s)) * 1000);
+  return `${String(m).padStart(2, "0")}:${mm}.${String(ms).padStart(3, "0")}`;
+}
+
+// 引用声明行（与后端 zoey_minimax_h3_tags.build_declaration 对齐）
+function buildDeclarationJs(node) {
+  const c = countRefs(node);
+  const joinNames = (ns) => ns.length === 1 ? ns[0] : ns.slice(0, -1).join(", ") + " and " + ns[ns.length - 1];
+  const parts = [];
+  if (c.images) parts.push(`${joinNames(c.images ? [...Array(c.images)].map((_, i) => `<Picture ${i + 1}>`) : [])} as reference ${c.images === 1 ? "frame" : "frames"}`);
+  if (c.videos) parts.push(`${joinNames([...Array(c.videos)].map((_, i) => `<Video ${i + 1}>`))} as reference motion`);
+  if (c.audios) parts.push(`${joinNames([...Array(c.audios)].map((_, i) => `<Audio ${i + 1}>`))} exactly as it is`);
+  if (!parts.length) return "";
+  return "Use " + parts.join(", and ") + ".";
+}
+
+// 素材库槽位信息：已连接图片/独立音频槽位 + 带音轨视频数（与后端编号一致）
+function libraryInfo(node) {
+  const imageSlots = [], audioSlots = [];
+  for (const input of node.inputs || []) {
+    if (input.link == null) continue;
+    const m = input.name?.match(/^ref_image_(\d+)$/);
+    if (m) imageSlots.push(+m[1]);
+    const a = input.name?.match(/^ref_audio_(\d+)$/);
+    if (a) audioSlots.push(+a[1]);
+  }
+  imageSlots.sort((x, y) => x - y);
+  audioSlots.sort((x, y) => x - y);
+  let paired = 0;
+  for (let i = 0; i < 3; i++) {
+    const v = node.inputs?.find((x) => x.name === `ref_video_${i}`);
+    const va = node.inputs?.find((x) => x.name === `ref_video_audio_${i}`);
+    if (v?.link != null && va?.link != null) paired++;
+  }
+  return { lib: globalLibrary, imageSlots, audioSlots, paired };
+}
+
+// 与后端 _library_plan 一致：算被引用素材库条目的 <Picture K>/<Audio K> 编号与注入顺序
+function libraryPlan(node, referenced) {
+  const { lib, imageSlots, audioSlots, paired } = libraryInfo(node);
+  const pic_of = {}, aud_of = {}, imgOrder = [], audOrder = [];
+  let nImg = imageSlots.length;
+  let nAud = audioSlots.length;
+  const sorted = [...new Set(referenced)].filter((i) => i >= 0 && i < lib.length).sort((a, b) => a - b);
+  for (const i of sorted) {
+    const e = lib[i];
+    if (!e || typeof e !== "object") continue;
+    const kind = e.kind || "";
+    if (["character", "prop", "scene"].includes(kind) && e.file) {
+      nImg += 1;
+      pic_of[i] = nImg;
+      imgOrder.push([i, kind]);
+    }
+  }
+  const libAudio = [], charVoice = [];
+  for (const i of sorted) {
+    const e = lib[i];
+    if (!e || typeof e !== "object") continue;
+    const kind = e.kind || "";
+    if (kind === "audio" && e.file) libAudio.push(i);
+    else if (kind === "character" && e.audio_file) charVoice.push(i);
+  }
+  libAudio.forEach((i, rank) => { aud_of[i] = paired + nAud + rank + 1; audOrder.push([i, "audio"]); });
+  charVoice.forEach((i, rank) => { aud_of[i] = paired + nAud + libAudio.length + rank + 1; audOrder.push([i, "voice"]); });
+  return { pic_of, aud_of, imgOrder, audOrder };
+}
+
+// 编译预览：把导演台数据拼成最终发给模型的提示词（与后端 _compose_director 对齐）
+function composeDirector(node, d) {
+  const chars = d.characters || [];
+  const charPic = {};
+  chars.forEach((ch, i) => {
+    if (!ch) return;
+    const k = pictureNumberForSlot(node, ch.slot);
+    if (k != null) charPic[i + 1] = k;
+  });
+  const libInfo = libraryInfo(node);
+  // 被引用的 @L 索引（ref_decl + 所有镜头提示词）→ 全局合并编号（与后端 _library_plan 一致）
+  const refText = [String(d.ref_decl || ""), ...(d.shots || []).map((s) => String(s.prompt || ""))].join(" ");
+  const refIdx = new Set();
+  for (const m of refText.matchAll(/@[Ll](\d+)/g)) refIdx.add(+m[1] - 1);
+  const libPlan = libraryPlan(node, [...refIdx]);
+  const libAnnos = [];
+  const libAnnoSeen = new Set();
+  const expandLib = (text) => String(text || "").replace(/@[Ll](\d+)/g, (m, n) => {
+    const i = +n - 1;
+    const e = libInfo.lib[i];
+    if (!e || typeof e !== "object") return m;
+    let line = null;
+    let tag = null;
+    if (i in libPlan.pic_of) {
+      tag = `<Picture ${libPlan.pic_of[i]}>`;
+      const kind = e.kind || "";
+      const name = (e.name || "").trim();
+      if (kind === "character") {
+        line = name ? `${tag} 是${name}的人物参考（锁定脸和服装）` : `${tag} 是人物参考（锁定脸和服装）`;
+        const app = (e.appearance || "").trim();
+        if (app) line += `。外貌：${app}`;
+        if (i in libPlan.aud_of) line += `，音色参考 <Audio ${libPlan.aud_of[i]}>`;
+      } else if (kind === "prop") {
+        line = name ? `${tag} 是${name}的物体参考（保持原样）` : `${tag} 是物体参考（保持这件物品原样）`;
+      } else {
+        line = name ? `${tag} 是${name}的场景参考（背景完全一致）` : `${tag} 是场景参考（背景完全一致）`;
+      }
+    } else if (i in libPlan.aud_of) {
+      tag = `<Audio ${libPlan.aud_of[i]}>`;
+      line = `${tag} 原样复用这段音频`;
+    }
+    if (line && !libAnnoSeen.has(line)) { libAnnoSeen.add(line); libAnnos.push(line); }
+    return tag || m;
+  });
+  const expand = (text) => {
+    text = String(text || "").replace(/@[Cc](\d+)/g, (m, n) => {
+      const k = charPic[+n];
+      return k != null ? `<Picture ${k}>` : m;
+    });
+    text = expandLib(text);
+    text = text.replace(/@([PpVv])(\d+)/g, (m, tag, num) => `<${tag.toUpperCase() === "P" ? "Picture" : "Video"} ${num}>`);
+    text = text.replace(/@[Aa](\d+)/g, (m, n) => `<Audio ${n}>`);
+    return text;
+  };
+
+  const decl = [];
+  if ((d.ref_decl || "").trim()) decl.push(expand(d.ref_decl));
+  chars.forEach((ch, i) => {
+    if (!ch) return;
+    const k = charPic[i + 1];
+    if (k == null) return;
+    const name = (ch.name || "").trim();
+    decl.push(name
+      ? `<Picture ${k}> 是${name}的人物参考（锁定脸和服装）`
+      : `<Picture ${k}> 是人物参考（锁定脸和服装）`);
+  });
+  const speakers = {};
+  (d.speakers || []).forEach((sp) => { if (sp && sp.id) speakers[sp.id] = sp.desc || ""; });
+
+  const parts = [];
+  const consistent = d.consistent !== false;
+  (d.shots || []).forEach((shot, i) => {
+    if (i > 0) {
+      const tr = (shot.transition || "").trim();
+      if (tr) parts.push(`TRANSITION: ${tr}`);
+    }
+    let shotText = expand(shot.prompt || "").trim();
+    if (i > 0 && consistent) shotText += "\n保持与上一镜相同的角色、场景、服装与光线。";
+    for (const dl of shot.dialogue || []) {
+      const text = (dl.text || "").trim();
+      if (!text) continue;
+      const spk = (dl.speaker || "").trim() || "S1";
+      const lang = (dl.lang || "").trim() || "English";
+      const desc = speakers[spk];
+      shotText += desc
+        ? `\n${desc} (${spk}) says: <d>[${lang}] ${text}.</d>`
+        : `\n(${spk}) says: <d>[${lang}] ${text}.</d>`;
+    }
+    parts.push(`CUT ${i + 1}: ${shotText}`);
+  });
+  if ((d.soundscape || "").trim()) parts.push(`overall_soundscape: ${d.soundscape.trim()}`);
+  if ((d.music || "").trim()) parts.push(`non_diegetic_music: ${d.music.trim()}`);
+
+  if (libAnnos.length) decl.push(...libAnnos);
+  if (decl.length) parts.unshift(decl.join("\n"));
+  const autoW = node.widgets?.find((w) => w.name === "auto_declaration");
+  const auto = autoW ? !!autoW.value : true;
+  if (!(d.ref_decl || "").trim() && auto) {
+    const bd = buildDeclarationJs(node);
+    if (bd) parts.unshift(bd);
+  }
+  return parts.join("\n");
+}
+
+// 把文本追加到 editor 光标处（无光标时定位到末尾）
+function appendToEditor(editor, text) {
+  const sel = window.getSelection();
+  let inEditor = sel && sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer);
+  if (!inEditor) {
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    editor.focus();
+  }
+  insertTextAtCaret(editor, " " + text);
+}
 
 function createDirectorPanel(node, name, inputData) {
   const container = document.createElement("div");
@@ -815,31 +1599,50 @@ function createDirectorPanel(node, name, inputData) {
   addBtn.textContent = "＋ 添加镜头";
   header.append(title, addBtn);
 
-  const list = document.createElement("div");
-  list.className = "zoey-director-list";
-
-  const total = document.createElement("div");
-  total.className = "zoey-director-total";
-
-  container.append(header, list, total);
-
   // 参考素材说明：contenteditable 富文本，支持 @ 缩略图 chip 与下拉选择
   const declEditor = document.createElement("div");
   declEditor.className = "zoey-director-decl";
   declEditor.contentEditable = "true";
   declEditor.spellcheck = false;
   declEditor.setAttribute("data-placeholder", "参考素材说明（可空）：@P1 是人物参考，@P2 是场景参考…");
-  header.after(declEditor);
   declEditor.addEventListener("paste", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     insertTextAtCaret(declEditor, e.clipboardData?.getData("text/plain") ?? "");
   });
   declEditor.addEventListener("drop", (e) => e.preventDefault());
 
+  const charsBox = document.createElement("div");
+  charsBox.className = "zoey-director-chars";
+  const spkBox = document.createElement("div");
+  const sndBox = document.createElement("div");
+  const list = document.createElement("div");
+  list.className = "zoey-director-list";
+  const total = document.createElement("div");
+  total.className = "zoey-director-total";
+  const preview = document.createElement("textarea");
+  preview.className = "zoey-director-preview";
+  preview.readOnly = true;
+  preview.spellcheck = false;
+  preview.placeholder = "编译预览：最终发给模型的完整提示词会显示在这里";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "zoey-director-toolbar";
+
+  container.append(header, toolbar, declEditor, charsBox, spkBox, sndBox, list, total, preview);
+
   let refDecl = "";
   let shots = [];
+  let speakers = [];
+  let characters = [];
+  let soundscape = "";
+  let music = "";
+  let consistent = true;
   let pickers = [];
   let declPicker = null;
+  let startTimes = [];
+  // collectEntries 通过 node._zoeyDirector.characters 读角色槽（getter 保证与闭包同步）
+  node._zoeyDirector = { get characters() { return characters; } };
 
   const widget = new DOMWidgetImpl({
     node,
@@ -848,8 +1651,18 @@ function createDirectorPanel(node, name, inputData) {
     element: container,
     options: {
       hideOnZoom: true,
-      getValue: () => JSON.stringify({ ref_decl: refDecl, shots }),
-      setValue: (v) => { const d = parseData(v); refDecl = d.refDecl; shots = d.shots; render(); },
+      getValue: () => JSON.stringify({ ref_decl: refDecl, shots, speakers, characters, soundscape, music, consistent }),
+      setValue: (v) => {
+        const d = parseData(v);
+        refDecl = d.refDecl;
+        shots = d.shots;
+        speakers = d.speakers;
+        characters = d.characters;
+        soundscape = d.soundscape;
+        music = d.music;
+        consistent = d.consistent;
+        render();
+      },
     },
   });
   widget.inputEl = list;
@@ -858,28 +1671,324 @@ function createDirectorPanel(node, name, inputData) {
   function parseData(v) {
     try {
       const d = JSON.parse(v || "");
-      if (Array.isArray(d)) return { refDecl: "", shots: d }; // 兼容旧格式：纯镜头数组
+      if (Array.isArray(d)) return { refDecl: "", shots: d, speakers: [], characters: [], soundscape: "", music: "", consistent: true }; // 兼容旧格式：纯镜头数组
       if (d && typeof d === "object") {
         return {
           refDecl: typeof d.ref_decl === "string" ? d.ref_decl : "",
           shots: Array.isArray(d.shots) ? d.shots : [],
+          speakers: Array.isArray(d.speakers) ? d.speakers : [],
+          characters: Array.isArray(d.characters) ? d.characters : [],
+          soundscape: typeof d.soundscape === "string" ? d.soundscape : "",
+          music: typeof d.music === "string" ? d.music : "",
+          consistent: typeof d.consistent === "boolean" ? d.consistent : true,
         };
       }
     } catch (e) {}
-    return { refDecl: "", shots: [] };
+    return { refDecl: "", shots: [], speakers: [], characters: [], soundscape: "", music: "", consistent: true };
   }
 
   declPicker = new RefPicker(node, null, declEditor);
-  declPicker.onChange = () => { refDecl = serializePrompt(declEditor); };
+  declPicker.onChange = () => { refDecl = serializePrompt(declEditor); composePreview(); };
+
+  function cloneShot(shot) {
+    return {
+      prompt: shot.prompt || "",
+      duration: shot.duration ?? 5,
+      transition: shot.transition || "",
+      dialogue: (shot.dialogue || []).map((d) => ({ ...d })),
+    };
+  }
+
+  function resolveCharEntry(i) {
+    const ch = characters[i];
+    if (!ch || ch.slot == null) return null;
+    return collectEntries(node).find((e) => e.kind === "图" && e.slot === ch.slot) || null;
+  }
+
+  function pickImageForChar(anchor, i) {
+    const entries = collectEntries(node).filter((e) => e.kind === "图");
+    const box = $el("div", { className: "zoey-ref-picker" });
+    const r = anchor.getBoundingClientRect();
+    const items = entries.map((en) =>
+      $el("div", {
+        className: "zoey-ref-item",
+        onclick: () => {
+          characters[i] = { slot: en.slot, name: characters[i]?.name || "" };
+          box.remove();
+          render();
+        },
+      }, [entryThumb(en), $el("div", { className: "zoey-ref-meta" }, [
+        $el("div", { className: "zoey-ref-label", textContent: `图 ${en.num}` }),
+        $el("div", { className: "zoey-ref-tag", textContent: en.tag }),
+      ])])
+    );
+    box.replaceChildren(
+      $el("div", { className: "zoey-ref-header", textContent: `@C${i + 1} 选择角色参考图` }),
+      ...(items.length ? items : [$el("div", { className: "zoey-ref-empty", textContent: "未连接参考图，请先在节点上连接图片" })]),
+    );
+    document.body.appendChild(box);
+    box.style.left = `${r.left}px`;
+    box.style.top = `${r.bottom + 4}px`;
+    const dismiss = (e) => { if (!box.contains(e.target)) { box.remove(); document.removeEventListener("pointerdown", dismiss); } };
+    setTimeout(() => document.addEventListener("pointerdown", dismiss), 0);
+  }
+
+  function charSlot(ch, i) {
+    const wrap = document.createElement("div");
+    wrap.className = "zoey-director-char";
+    const btn = document.createElement("button");
+    btn.className = "zoey-director-char-btn";
+    if (ch && ch.slot != null) {
+      const entry = resolveCharEntry(i);
+      const url = entry ? resolveThumbSrc(entry) : null;
+      if (url) {
+        const img = document.createElement("img");
+        img.onerror = () => { btn.textContent = `@C${i + 1}`; };
+        img.src = url;
+        btn.appendChild(img);
+      } else {
+        btn.textContent = `@C${i + 1}`;
+      }
+    } else {
+      btn.textContent = "＋";
+    }
+    btn.title = ch && ch.slot != null ? "点击更换角色参考图" : `点击为 @C${i + 1} 分配参考图`;
+    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); pickImageForChar(btn, i); });
+
+    const name = document.createElement("input");
+    name.placeholder = `@C${i + 1} 名字`;
+    name.value = (ch && ch.name) || "";
+    name.addEventListener("input", () => {
+      if (!characters[i]) characters[i] = { slot: null, name: "" };
+      characters[i].name = name.value;
+      composePreview();
+    });
+
+    const del = document.createElement("button");
+    del.className = "zoey-director-mini-btn";
+    del.textContent = "✕";
+    del.title = "清空角色";
+    del.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      characters[i] = null;
+      render();
+    });
+
+    wrap.append(btn, name, ch && ch.slot != null ? del : null);
+    return wrap;
+  }
+
+  function camRow(editor) {
+    const row = document.createElement("div");
+    row.className = "zoey-director-camrow";
+    const lbl1 = document.createElement("span");
+    lbl1.className = "cam-label";
+    lbl1.textContent = "景别";
+    row.appendChild(lbl1);
+    for (const p of SHOT_SIZE_PRESETS) row.appendChild(camBtn(editor, p));
+    const lbl2 = document.createElement("span");
+    lbl2.className = "cam-label";
+    lbl2.textContent = "运镜";
+    row.appendChild(lbl2);
+    for (const p of CAMERA_PRESETS) row.appendChild(camBtn(editor, p));
+    return row;
+  }
+  function camBtn(editor, p) {
+    const b = document.createElement("button");
+    b.textContent = p.label;
+    b.title = p.text;
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); appendToEditor(editor, p.text); });
+    return b;
+  }
+
+  function addSpeaker() {
+    if (speakers.length >= MAX_SPEAKERS) return;
+    const used = new Set(speakers.map((s) => s.id));
+    const id = SPEAKER_IDS.find((s) => !used.has(s)) || `S${speakers.length + 1}`;
+    speakers.push({ id, desc: "" });
+    render();
+  }
+
+  function buildSpeakerUI() {
+    const box = document.createElement("div");
+    box.className = "zoey-director-collapse";
+    const head = document.createElement("div");
+    head.className = "zoey-director-collapse-head";
+    const t = document.createElement("span");
+    t.textContent = `🗣 说话人定义（${speakers.length}/${MAX_SPEAKERS}）`;
+    const add = document.createElement("button");
+    add.className = "zoey-director-mini-btn";
+    add.textContent = "＋ 说话人";
+    add.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); addSpeaker(); });
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▸";
+    head.append(t, add);
+    const body = document.createElement("div");
+    body.className = "zoey-director-collapse-body";
+    body.style.display = "none";
+    head.addEventListener("click", (e) => {
+      if (e.target === add) return;
+      body.style.display = body.style.display === "none" ? "flex" : "none";
+      caret.textContent = body.style.display === "none" ? "▸" : "▾";
+    });
+    speakers.forEach((sp, i) => {
+      const row = document.createElement("div");
+      row.className = "zoey-director-speaker";
+      const id = document.createElement("span");
+      id.className = "zoey-director-spk-id";
+      id.textContent = sp.id;
+      const desc = document.createElement("input");
+      desc.value = sp.desc || "";
+      desc.placeholder = "身份/音色，如 the young woman with a soft, breathy voice";
+      desc.addEventListener("input", () => { sp.desc = desc.value; composePreview(); });
+      const del = document.createElement("button");
+      del.className = "zoey-director-mini-btn";
+      del.textContent = "✕";
+      del.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); speakers.splice(i, 1); render(); });
+      row.append(id, desc, del);
+      body.appendChild(row);
+    });
+    box.append(head, body);
+    return box;
+  }
+
+  function buildSoundUI() {
+    const box = document.createElement("div");
+    box.className = "zoey-director-collapse";
+    const head = document.createElement("div");
+    head.className = "zoey-director-collapse-head";
+    const t = document.createElement("span");
+    t.textContent = "🎵 音效 / 配乐";
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▸";
+    head.append(t, caret);
+    const body = document.createElement("div");
+    body.className = "zoey-director-collapse-body";
+    body.style.display = "none";
+    head.addEventListener("click", () => {
+      body.style.display = body.style.display === "none" ? "flex" : "none";
+      caret.textContent = body.style.display === "none" ? "▸" : "▾";
+    });
+    const f1 = document.createElement("div");
+    f1.className = "zoey-director-field";
+    const l1 = document.createElement("label");
+    l1.textContent = "环境声/音效 overall_soundscape";
+    const sfx = document.createElement("input");
+    sfx.value = soundscape;
+    sfx.placeholder = "全片环境声与物理声，如 Rain on the window...";
+    sfx.addEventListener("input", () => { soundscape = sfx.value; composePreview(); });
+    f1.append(l1, sfx);
+    const f2 = document.createElement("div");
+    f2.className = "zoey-director-field";
+    const l2 = document.createElement("label");
+    l2.textContent = "配乐 non_diegetic_music";
+    const bgm = document.createElement("input");
+    bgm.value = music;
+    bgm.placeholder = "仅观众可听的配乐，如 Sustained cello at slow tempo...";
+    bgm.addEventListener("input", () => { music = bgm.value; composePreview(); });
+    f2.append(l2, bgm);
+    body.append(f1, f2);
+    box.append(head, body);
+    return box;
+  }
+
+  function applyTemplate(t) {
+    t.shots.forEach((s) => shots.push(cloneShot(s)));
+    render();
+  }
+
+  function toggleTemplateDropdown(btn) {
+    document.querySelectorAll(".zoey-director-tmpl").forEach((d) => d.remove());
+    const box = $el("div", { className: "zoey-ref-picker zoey-director-tmpl" });
+    const r = btn.getBoundingClientRect();
+    const items = SHOT_TEMPLATES.map((t) =>
+      $el("div", { className: "zoey-ref-item", onclick: () => { box.remove(); applyTemplate(t); } }, [
+        $el("div", { className: "zoey-ref-meta" }, [
+          $el("div", { className: "zoey-ref-label", textContent: t.name }),
+          $el("div", { className: "zoey-ref-hint", textContent: `${t.shots.length} 镜` }),
+        ]),
+      ])
+    );
+    box.replaceChildren($el("div", { className: "zoey-ref-header", textContent: "镜头模板（追加到分镜末尾）" }), ...items);
+    document.body.appendChild(box);
+    box.style.left = `${r.left}px`;
+    box.style.top = `${r.bottom + 4}px`;
+    const dismiss = (e) => { if (!box.contains(e.target)) { box.remove(); document.removeEventListener("pointerdown", dismiss); } };
+    setTimeout(() => document.addEventListener("pointerdown", dismiss), 0);
+  }
+
+  // 按台词量分配每镜时长：对白多的镜头给更多时间，总量不超过 15s（对白~4字/秒）
+  function autoAllocateDurations() {
+    const needs = shots.map((s) => {
+      const chars = (s.dialogue || []).reduce((a, d) => a + ((d.text || "").trim().length || 0), 0);
+      return chars > 0 ? Math.min(MAX_TOTAL_SECONDS, Math.max(1.5, Math.ceil((chars / 4) * 10) / 10)) : 3;
+    });
+    const sum = needs.reduce((a, b) => a + b, 0);
+    const factor = sum > MAX_TOTAL_SECONDS ? MAX_TOTAL_SECONDS / sum : 1;
+    shots.forEach((s, i) => {
+      s.duration = Math.round(Math.min(MAX_TOTAL_SECONDS, Math.max(1, needs[i] * factor)) * 10) / 10;
+    });
+    render();
+  }
+
+  function buildToolbar() {
+    const tb = document.createElement("div");
+    tb.className = "zoey-director-toolbar";
+
+    const purposeLabel = document.createElement("span");
+    purposeLabel.className = "tool-label";
+    purposeLabel.textContent = "📌 用途";
+    tb.appendChild(purposeLabel);
+    for (const p of REF_PURPOSES) {
+      const b = document.createElement("button");
+      b.textContent = p.replace(/^是/, "").split("（")[0];
+      b.title = p;
+      b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); applyPurpose(p); });
+      tb.appendChild(b);
+    }
+
+    const tmplBtn = document.createElement("button");
+    tmplBtn.textContent = "📋 模板";
+    tmplBtn.title = "套用镜头模板";
+    tmplBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); toggleTemplateDropdown(tmplBtn); });
+    tb.appendChild(tmplBtn);
+
+    const allocBtn = document.createElement("button");
+    allocBtn.textContent = "⏱ 按台词分配时长";
+    allocBtn.title = "根据对白量自动分配每镜时长（总长≤15s）";
+    allocBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); autoAllocateDurations(); });
+    tb.appendChild(allocBtn);
+
+    const toggle = document.createElement("label");
+    toggle.className = "zoey-director-toggle";
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = consistent;
+    chk.addEventListener("change", () => { consistent = chk.checked; composePreview(); });
+    toggle.append(chk, document.createTextNode("跨镜一致"));
+    tb.appendChild(toggle);
+
+    return tb;
+  }
 
   function render() {
     pickers.forEach((p) => p.hide());
     declPicker?.hide();
     pickers = [];
+    toolbar.replaceChildren(buildToolbar());
     renderPrompt(declEditor, refDecl, node);
+    charsBox.replaceChildren();
+    for (let i = 0; i < MAX_CHARACTERS; i++) charsBox.appendChild(charSlot(characters[i], i));
+    spkBox.replaceChildren(buildSpeakerUI());
+    sndBox.replaceChildren(buildSoundUI());
+    startTimes = [];
+    let acc = 0;
+    shots.forEach((s) => { startTimes.push(acc); acc += parseFloat(s.duration) || 5; });
     list.replaceChildren();
     shots.forEach((shot, i) => list.appendChild(shotCard(shot, i)));
-    updateTotal();
+    composePreview();
   }
 
   function shotCard(shot, i) {
@@ -889,33 +1998,95 @@ function createDirectorPanel(node, name, inputData) {
     const head = document.createElement("div");
     head.className = "zoey-director-shot-head";
     const label = document.createElement("span");
-    label.textContent = `CUT ${i + 1}`;
-    const del = document.createElement("button");
-    del.textContent = "✕";
-    del.title = "删除镜头";
-    del.addEventListener("pointerdown", (e) => {
-      e.preventDefault(); e.stopPropagation();
-      shots.splice(i, 1);
-      render();
-    });
-    head.append(label, del);
+    label.textContent = `CUT ${i + 1} · ${fmtTime(startTimes[i] ?? 0)}`;
+    const btns = document.createElement("div");
+    btns.style.display = "flex";
+    btns.style.gap = "2px";
+    const mkBtn = (t, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "zoey-director-mini-btn";
+      b.textContent = t;
+      b.title = title;
+      b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+      return b;
+    };
+    btns.append(
+      mkBtn("⇧", "上移", () => { if (i > 0) { [shots[i - 1], shots[i]] = [shots[i], shots[i - 1]]; render(); } }),
+      mkBtn("⇩", "下移", () => { if (i < shots.length - 1) { [shots[i + 1], shots[i]] = [shots[i], shots[i + 1]]; render(); } }),
+      mkBtn("⧉", "复制镜头", () => { shots.splice(i + 1, 0, cloneShot(shot)); render(); }),
+      mkBtn("✕", "删除镜头", () => { shots.splice(i, 1); render(); }),
+    );
+    head.append(label, btns);
 
-    // 镜头提示词：contenteditable 富文本，支持 @ 缩略图 chip 与下拉选择
+    // 镜头提示词：contenteditable 富文本，支持 @ 缩略图 chip、角色 @C1、下拉选择
     const editor = document.createElement("div");
     editor.className = "zoey-director-shot-editor";
     editor.contentEditable = "true";
     editor.spellcheck = false;
-    editor.setAttribute("data-placeholder", "本镜头提示词，输入 @ 引用参考素材");
+    editor.setAttribute("data-placeholder", "本镜头提示词，输入 @ 引用素材，角色用 @C1…");
     renderPrompt(editor, shot.prompt || "", node);
     editor.addEventListener("paste", (e) => {
       e.preventDefault();
+      e.stopPropagation();
       insertTextAtCaret(editor, e.clipboardData?.getData("text/plain") ?? "");
     });
     editor.addEventListener("drop", (e) => e.preventDefault());
 
     const picker = new RefPicker(node, null, editor);
-    picker.onChange = () => { shot.prompt = serializePrompt(editor); };
+    picker.onChange = () => { shot.prompt = serializePrompt(editor); composePreview(); };
     pickers.push(picker);
+
+    const cam = camRow(editor);
+
+    // 对白（说话人 S1/S2… + 语言 + 台词原文）
+    const dialogueBox = document.createElement("div");
+    dialogueBox.style.display = "flex";
+    dialogueBox.style.flexDirection = "column";
+    dialogueBox.style.gap = "3px";
+    shot.dialogue = Array.isArray(shot.dialogue) ? shot.dialogue : [];
+    function renderDialogue() {
+      dialogueBox.replaceChildren();
+      shot.dialogue.forEach((dl, j) => {
+        const row = document.createElement("div");
+        row.className = "zoey-director-dlg";
+        const spkSel = document.createElement("select");
+        spkSel.className = "spk";
+        for (const s of SPEAKER_IDS) {
+          const o = document.createElement("option");
+          o.value = s; o.textContent = s;
+          if (dl.speaker === s) o.selected = true;
+        }
+        if (dl.speaker && !SPEAKER_IDS.includes(dl.speaker)) {
+          const o = document.createElement("option");
+          o.value = dl.speaker; o.textContent = dl.speaker; o.selected = true;
+          spkSel.appendChild(o);
+        }
+        spkSel.addEventListener("change", () => { dl.speaker = spkSel.value; composePreview(); });
+        const lang = document.createElement("input");
+        lang.className = "lang";
+        lang.value = dl.lang || "English";
+        lang.placeholder = "语言";
+        lang.addEventListener("input", () => { dl.lang = lang.value; composePreview(); });
+        const txt = document.createElement("input");
+        txt.className = "txt";
+        txt.value = dl.text || "";
+        txt.placeholder = "台词原文（<d> 内逐字保留，不翻译）";
+        txt.addEventListener("input", () => { dl.text = txt.value; composePreview(); });
+        const del = document.createElement("button");
+        del.className = "del";
+        del.textContent = "✕";
+        del.title = "删除对白";
+        del.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); shot.dialogue.splice(j, 1); renderDialogue(); composePreview(); });
+        row.append(spkSel, lang, txt, del);
+        dialogueBox.appendChild(row);
+      });
+      const add = document.createElement("button");
+      add.className = "zoey-director-dlgadd";
+      add.textContent = "＋ 对白";
+      add.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); shot.dialogue.push({ speaker: "S1", lang: "English", text: "" }); renderDialogue(); composePreview(); });
+      dialogueBox.appendChild(add);
+    }
+    renderDialogue();
 
     const durRow = document.createElement("div");
     durRow.className = "zoey-director-shot-dur";
@@ -928,36 +2099,241 @@ function createDirectorPanel(node, name, inputData) {
     durInput.addEventListener("input", () => {
       const v = parseFloat(durInput.value);
       shot.duration = Number.isNaN(v) ? 5 : Math.min(MAX_TOTAL_SECONDS, Math.max(1, v));
-      updateTotal();
+      composePreview();
     });
     const durUnit = document.createElement("span");
     durUnit.textContent = "s";
     durRow.append(durLbl, durInput, durUnit);
 
-    const trans = document.createElement("input");
+    const trans = document.createElement("select");
     trans.className = "zoey-director-shot-trans";
-    trans.value = shot.transition || "";
-    trans.placeholder = "进入本镜头的转场（如 WHIP PAN，可留空）";
-    trans.addEventListener("input", () => { shot.transition = trans.value; });
+    for (const t of TRANSITION_PRESETS) {
+      const o = document.createElement("option");
+      o.value = t;
+      o.textContent = t || "（无转场）";
+      if ((shot.transition || "") === t) o.selected = true;
+    }
+    if (shot.transition && !TRANSITION_PRESETS.includes(shot.transition)) {
+      const o = document.createElement("option");
+      o.value = shot.transition;
+      o.textContent = shot.transition;
+      o.selected = true;
+      trans.appendChild(o);
+    }
+    trans.addEventListener("change", () => { shot.transition = trans.value; composePreview(); });
 
-    card.append(head, editor, durRow, trans);
+    card.append(head, cam, editor, dialogueBox, durRow, trans);
     return card;
   }
 
-  function updateTotal() {
+  function composePreview() {
+    const d = { ref_decl: refDecl, shots, speakers, characters, soundscape, music, consistent };
     const sum = shots.reduce((s, x) => s + (parseFloat(x.duration) || 0), 0);
     const capped = Math.min(sum, MAX_TOTAL_SECONDS);
     const frames = frameCount(capped);
     total.textContent = `总时长 ${sum}s → ${capped}s (${frames}帧)` + (sum > MAX_TOTAL_SECONDS ? "  ⚠ 超15s将截断" : "");
+    try {
+      preview.value = composeDirector(node, d);
+    } catch (e) {
+      console.error("[Zoey MiniMax H3] composePreview:", e);
+      preview.value = String(e?.message || e);
+    }
   }
 
   addBtn.addEventListener("pointerdown", (e) => {
     e.preventDefault(); e.stopPropagation();
-    shots.push({ prompt: "", duration: 5, transition: "" });
+    shots.push({ prompt: "", duration: 5, transition: "", dialogue: [] });
     render();
   });
 
+  // 参考素材连接变化时刷新角色槽缩略图/编译预览
+  const prevConn = node.onConnectionsChange;
+  node.onConnectionsChange = (type, slot, isConnected, ...rest) => {
+    try {
+      prevConn?.call(node, type, slot, isConnected, ...rest);
+    } catch (e) {
+      console.error("[Zoey MiniMax H3] director onConnectionsChange:", e);
+    }
+    render();
+  };
+
   render();
+  return widget;
+}
+
+// ---- 素材库（角色/道具/场景/音频）控件 ----
+function createLibraryWidget(node, name, inputData) {
+  const container = document.createElement("div");
+  container.className = "zoey-library";
+
+  const head = document.createElement("div");
+  head.className = "zoey-director-header";
+  const title = document.createElement("span");
+  title.textContent = "🧰 素材库（全局·跨工作流）";
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "＋ 添加";
+  addBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    globalLibrary.push({ kind: "character", file: "", name: "", appearance: "", audio_file: "", desc: "" });
+    renderLibrary();
+    scheduleSaveLibrary();
+  });
+  const refreshBtn = document.createElement("button");
+  refreshBtn.textContent = "↻";
+  refreshBtn.title = "从服务器刷新（别的节点可能改过）";
+  refreshBtn.addEventListener("pointerdown", async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    await loadGlobalLibrary();
+    renderLibrary();
+  });
+  head.append(title, addBtn, refreshBtn);
+
+  const list = document.createElement("div");
+  list.className = "zoey-library-list";
+  container.append(head, list);
+
+  const widget = new DOMWidgetImpl({
+    node,
+    name,
+    type: "customtext",
+    element: container,
+    options: { hideOnZoom: true, getValue: () => "", setValue: () => {} },
+  });
+  widget.inputEl = list;
+  addWidget(node, widget);
+
+  function renderLibrary() {
+    list.replaceChildren();
+    if (!globalLibraryLoaded) {
+      list.appendChild($el("div", { className: "zoey-library-hint", textContent: "加载素材库中…" }));
+      loadGlobalLibrary().then(renderLibrary);
+      return;
+    }
+    if (!globalLibrary.length) {
+      list.appendChild($el("div", { className: "zoey-library-hint", textContent: "永久素材库：上传角色/道具/场景/音频，提示词里 @L1 调用" }));
+    }
+    globalLibrary.forEach((entry, i) => list.appendChild(libRow(entry, i)));
+  }
+
+  function uploadFileInto(entry, field) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = field === "audio_file" || entry.kind === "audio" ? "audio/*,video/*" : "image/*";
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      const fd = new FormData();
+      fd.append("file", f, f.name);
+      fd.append("kind", entry.kind || "");
+      fetch(api.apiURL("/zoey/library/upload"), { method: "POST", body: fd })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.filename) {
+            entry[field] = d.filename;
+            renderLibrary();
+            scheduleSaveLibrary();
+          } else {
+            console.error("[Zoey MiniMax H3] upload failed:", d.error);
+          }
+        })
+        .catch((err) => console.error("[Zoey MiniMax H3] upload:", err));
+    };
+    input.click();
+  }
+
+  function libRow(entry, i) {
+    const row = document.createElement("div");
+    row.className = "zoey-library-row";
+    row.style.flexWrap = "wrap";
+
+    const isAudio = entry.kind === "audio";
+    const mainBtn = document.createElement("button");
+    mainBtn.className = "zoey-library-slot";
+    mainBtn.title = isAudio ? "点击上传音频" : "点击上传图片";
+    if (entry.file) {
+      if (isAudio) {
+        mainBtn.textContent = "🔊";
+      } else {
+        const url = libraryMediaUrl(entry.file);
+        const img = document.createElement("img");
+        img.onerror = () => { mainBtn.textContent = "🧩"; };
+        img.src = url;
+        mainBtn.appendChild(img);
+      }
+    } else {
+      mainBtn.textContent = "＋";
+    }
+    mainBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      uploadFileInto(entry, "file");
+    });
+
+    const kindSel = document.createElement("select");
+    const KINDS = [["character", "角色"], ["prop", "道具"], ["scene", "场景"], ["audio", "音频"]];
+    for (const [k, label] of KINDS) {
+      const o = document.createElement("option");
+      o.value = k; o.textContent = label;
+      if (entry.kind === k) o.selected = true;
+    }
+    kindSel.addEventListener("change", () => {
+      entry.kind = kindSel.value;
+      renderLibrary();
+      scheduleSaveLibrary();
+    });
+
+    const name = document.createElement("input");
+    name.value = entry.name || "";
+    name.placeholder = "名称";
+    name.addEventListener("input", () => { entry.name = name.value; });
+
+    const appearance = document.createElement("input");
+    appearance.value = entry.appearance || "";
+    appearance.placeholder = "外貌备注";
+    appearance.style.display = entry.kind === "character" ? "" : "none";
+    appearance.addEventListener("input", () => { entry.appearance = appearance.value; });
+
+    const voiceBtn = document.createElement("button");
+    voiceBtn.className = "zoey-director-mini-btn";
+    voiceBtn.textContent = entry.audio_file ? "🎙✓" : "🎙";
+    voiceBtn.title = "上传角色语音";
+    voiceBtn.style.display = entry.kind === "character" ? "" : "none";
+    voiceBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      uploadFileInto(entry, "audio_file");
+    });
+
+    const desc = document.createElement("input");
+    desc.className = "lib-desc";
+    desc.value = entry.desc || "";
+    desc.placeholder = "备注";
+    desc.addEventListener("input", () => { entry.desc = desc.value; });
+
+    const del = document.createElement("button");
+    del.className = "zoey-director-mini-btn";
+    del.textContent = "✕";
+    del.title = "删除";
+    del.addEventListener("pointerdown", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const removed = globalLibrary.splice(i, 1)[0] || {};
+      renderLibrary();
+      await saveLibrary();
+      for (const f of [removed.file, removed.audio_file]) {
+        if (!f) continue;
+        try {
+          await api.fetchApi("/zoey/library/delete_file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename: f }),
+          });
+        } catch (err) { /* 孤儿文件删除失败不影响功能 */ }
+      }
+    });
+
+    row.append(mainBtn, kindSel, name, appearance, voiceBtn, desc, del);
+    return row;
+  }
+
+  renderLibrary();
   return widget;
 }
 
@@ -1002,6 +2378,12 @@ class RefPicker {
     this.selected = 0;
     this.strip = null;
     this.onChange = null; // 内容变化回调（导演台镜头同步用）
+
+    // 阻止 Ctrl/Cmd+V 冒泡到全局 keybinding：contenteditable 编辑器不被全局识别为文本输入，
+    // 否则粘贴提示词时会连带把之前复制的节点粘贴上（ComfyUI 自带 tiptap 文本控件同样用 stopPropagation）
+    editor.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") e.stopPropagation();
+    });
 
     editor.addEventListener("keydown", (e) => this.#onKeyDown(e));
     editor.addEventListener("keyup", (e) => this.#onKeyUp(e));
@@ -1169,7 +2551,7 @@ class RefPicker {
     if (!this.strip) return;
     const text = this.widget?.value ?? "";
     const used = new Set();
-    const re = /@[PpVvAa]\d+/g;
+    const re = /@[PpVvAaCcLl]\d+/g;
     let m;
     while ((m = re.exec(text))) used.add(m[0].toUpperCase());
     const entries = collectEntries(this.node);
@@ -1188,29 +2570,34 @@ class RefPicker {
 
   #previewItem(entry) {
     const tag = $el("span", { className: "zoey-ref-preview-tag", textContent: entry.tag });
+    let item;
     if (entry.mediaType === "audio") {
-      return $el("div", { className: "zoey-ref-preview-item", title: entry.hint || entry.tag }, [
+      item = $el("div", { className: "zoey-ref-preview-item", title: entry.hint || entry.tag }, [
         $el("span", { className: "zoey-ref-preview-icon", textContent: "🔊" }),
         tag,
       ]);
-    }
-    const url = resolveThumbSrc(entry);
-    let media;
-    if (url) {
-      const img = $el("img", { className: "zoey-ref-preview-img" });
-      img.onerror = () => {
-        const icon = $el("span", { className: "zoey-ref-preview-icon", textContent: entry.mediaType === "video" ? "🎬" : "🖼" });
-        img.replaceWith(icon);
-      };
-      img.src = url;
-      media = img;
     } else {
-      media = $el("span", { className: "zoey-ref-preview-icon", textContent: entry.mediaType === "video" ? "🎬" : "🖼" });
+      const url = resolveThumbSrc(entry);
+      let media;
+      if (url) {
+        const img = $el("img", { className: "zoey-ref-preview-img" });
+        img.onerror = () => {
+          const icon = $el("span", { className: "zoey-ref-preview-icon", textContent: entry.mediaType === "video" ? "🎬" : "🖼" });
+          img.replaceWith(icon);
+        };
+        img.src = url;
+        media = img;
+      } else {
+        media = $el("span", { className: "zoey-ref-preview-icon", textContent: entry.mediaType === "video" ? "🎬" : "🖼" });
+      }
+      item = $el("div", { className: "zoey-ref-preview-item", title: entry.hint || entry.tag }, [media, tag]);
     }
-    return $el("div", { className: "zoey-ref-preview-item", title: entry.hint || entry.tag }, [media, tag]);
+    attachHover(item, entry);
+    return item;
   }
 
   hide() {
+    HoverPreview.hide();
     if (this.dropdown) {
       this.dropdown.remove();
       this.dropdown = null;
@@ -1235,6 +2622,9 @@ function patchWidgets() {
       setupDirectorToggle(node, dirWidget);
       return { widget: dirWidget };
     }
+    if (node?.comfyClass === NODE_TYPE && inputName === "library") {
+      return { widget: createLibraryWidget(node, inputName, inputData) };
+    }
     return origString.apply(this, arguments);
   };
 
@@ -1254,7 +2644,14 @@ function attachPicker(node, widget) {
     const picker = new RefPicker(node, widget, el);
     if (widget.strip) picker.attachStrip(widget.strip);
 
-    const refresh = () => { try { picker.refreshPreview(); } catch (e) { console.error("[Zoey MiniMax H3] refreshPreview:", e); } };
+    const refresh = () => {
+      try { picker.refreshPreview(); } catch (e) { console.error("[Zoey MiniMax H3] refreshPreview:", e); }
+      // 素材库 widget 晚于 prompt 创建，@L 芯片需在加载后重渲染才有缩略图
+      try {
+        const text = serializePrompt(el);
+        renderPrompt(el, text, node);
+      } catch (e) { console.error("[Zoey MiniMax H3] rerenderPrompt:", e); }
+    };
     // 注意：前端 onConfigure/onConnectionsChange 内部依赖 this === node，
     // 必须用 .call(node, ...) 保留 this，否则会因 this 丢失而崩溃（如读 this.has_errors）
     const prevConn = node.onConnectionsChange;
@@ -1275,10 +2672,17 @@ function attachPicker(node, widget) {
       }
       refresh();
     };
+    // 全局素材库异步加载完成后刷新 @L 芯片缩略图
+    const onLibLoaded = () => refresh();
+    document.addEventListener("zoey:library-loaded", onLibLoaded);
     setTimeout(refresh, 200);
 
     const prevOnRemoved = node.onRemoved;
-    node.onRemoved = () => { picker.hide(); prevOnRemoved?.call(node); };
+    node.onRemoved = () => {
+      document.removeEventListener("zoey:library-loaded", onLibLoaded);
+      picker.hide();
+      prevOnRemoved?.call(node);
+    };
     return true;
   };
   if (tryAttach()) return;
@@ -1294,5 +2698,8 @@ app.registerExtension({
   init() {
     $el("style", { textContent: STYLE, parent: document.head });
     patchWidgets();
+    document.addEventListener("focusin", (e) => {
+      if (e.target && e.target.isContentEditable) lastRefEditor = e.target;
+    });
   },
 });

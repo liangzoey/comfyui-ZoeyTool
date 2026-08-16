@@ -48,6 +48,12 @@ except ImportError:
 # ── MiniMax H3 参考转视频（@ 语法包装，依赖 comfy_extras） ──
 from .zoey_minimax_h3 import NODE_CLASS_MAPPINGS as MINIMAX_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MINIMAX_DISPLAY
 
+# ── 永久素材库 HTTP 接口（注册 /zoey/library 路由，无节点映射） ──
+try:
+    from . import zoey_library_server  # noqa: F401
+except Exception:
+    pass
+
 # ── 合并所有节点映射 ──
 NODE_CLASS_MAPPINGS = {
     **CROPPER_MAPPINGS,

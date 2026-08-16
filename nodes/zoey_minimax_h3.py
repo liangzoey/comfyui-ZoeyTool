@@ -8,6 +8,8 @@
 
 import json
 import math
+import os
+import re
 
 from .zoey_minimax_h3_tags import build_declaration, count_refs, expand_at_tags
 
@@ -87,20 +89,216 @@ def _frame_count(duration):
     return n
 
 
-def _compose_director(shots_json, counts):
-    """导演台：把分镜列表拼成 CUT/TRANSITION 提示词 + 总时长（秒）+ 参考素材说明。
+_CAST_RE = re.compile(r"@(?:[Cc]|char)(\d+)")
+_LIB_RE = re.compile(r"@[Ll](\d+)")
+_LIB_SUBFOLDER = "zoey_library"
 
-    数据结构：{"ref_decl": "参考素材说明(可空)", "shots": [{"prompt", "duration", "transition"}]}
-    兼容旧格式：直接传镜头数组。
+
+def _referenced_indexes(text):
+    """扫描文本里用到的 @L 序号（转成 0 基索引），排序去重。"""
+    return sorted({int(m) - 1 for m in _LIB_RE.findall(text or "")})
+
+
+def _referenced_from_director(shots_json):
+    """扫描导演台 JSON（ref_decl + 各镜头提示词）里用到的 @L 索引。"""
+    idxs = set()
+    try:
+        data = json.loads(shots_json or "{}")
+    except Exception:
+        return []
+    texts = []
+    if isinstance(data, dict):
+        texts.append(str(data.get("ref_decl", "")))
+        for s in data.get("shots") or []:
+            if isinstance(s, dict):
+                texts.append(str(s.get("prompt", "")))
+    elif isinstance(data, list):
+        for s in data:
+            if isinstance(s, dict):
+                texts.append(str(s.get("prompt", "")))
+    for t in texts:
+        idxs.update(int(m) - 1 for m in _LIB_RE.findall(t))
+    return sorted(idxs)
+
+
+def _library_plan(entries, referenced, connected_img_slots, paired_audio, connected_audio_slots):
+    """计算被引用素材库条目的 <Picture K>/<Audio K> 编号与注入顺序。
+
+    Picture = 已连接图片（槽位升序）→ 被引用素材库图片（库顺序）
+    Audio   = 视频音轨（槽位升序）→ 已连接独立音频（槽位升序）→ 被引用素材库 audio（库顺序）→ 被引用 character 语音（库顺序）
+    返回 (pic_of, aud_of, img_order, aud_order)。
+    """
+    referenced = sorted(set(referenced))
+    pic_of = {}
+    aud_of = {}
+    img_order = []
+    aud_order = []
+    n_img = len(connected_img_slots)
+    n_aud = len(connected_audio_slots)
+    for i in referenced:
+        e = entries[i] if 0 <= i < len(entries) else None
+        if not isinstance(e, dict):
+            continue
+        kind = str(e.get("kind", "")).lower()
+        if kind in ("character", "prop", "scene") and e.get("file"):
+            n_img += 1
+            pic_of[i] = n_img
+            img_order.append((i, kind))
+    lib_audio = []
+    char_voice = []
+    for i in referenced:
+        e = entries[i] if 0 <= i < len(entries) else None
+        if not isinstance(e, dict):
+            continue
+        kind = str(e.get("kind", "")).lower()
+        if kind == "audio" and e.get("file"):
+            lib_audio.append(i)
+        elif kind == "character" and e.get("audio_file"):
+            char_voice.append(i)
+    for rank, i in enumerate(lib_audio):
+        aud_of[i] = paired_audio + n_aud + rank + 1
+        aud_order.append((i, "audio"))
+    for rank, i in enumerate(char_voice):
+        aud_of[i] = paired_audio + n_aud + len(lib_audio) + rank + 1
+        aud_order.append((i, "voice"))
+    return pic_of, aud_of, img_order, aud_order
+
+
+def _expand_library_tags(text, entries, pic_of, aud_of):
+    """把 @L{n} 展开为 <Picture K>/<Audio K>，并收集标注行（去重、保持顺序）。
+
+    character 标注含外貌与语音：...人物参考（锁定脸和服装）。外貌：…，音色参考 <Audio J>
+    """
+    annos = []
+    seen = set()
+
+    def add(line):
+        if line and line not in seen:
+            seen.add(line)
+            annos.append(line)
+
+    def repl(match):
+        i = int(match.group(1)) - 1
+        entry = entries[i] if 0 <= i < len(entries) else None
+        if not isinstance(entry, dict):
+            return match.group(0)
+        if i in pic_of:
+            tag = f"<Picture {pic_of[i]}>"
+            kind = str(entry.get("kind", "")).lower()
+            name = str(entry.get("name", "")).strip()
+            if kind == "character":
+                line = f"{tag} 是{name}的人物参考（锁定脸和服装）" if name else f"{tag} 是人物参考（锁定脸和服装）"
+                appearance = str(entry.get("appearance", "")).strip()
+                if appearance:
+                    line += f"。外貌：{appearance}"
+                if i in aud_of:
+                    line += f"，音色参考 <Audio {aud_of[i]}>"
+                add(line)
+            elif kind == "prop":
+                add(f"{tag} 是{name}的物体参考（保持原样）" if name else f"{tag} 是物体参考（保持这件物品原样）")
+            else:  # scene / 其他图片类
+                add(f"{tag} 是{name}的场景参考（背景完全一致）" if name else f"{tag} 是场景参考（背景完全一致）")
+            return tag
+        if i in aud_of:
+            tag = f"<Audio {aud_of[i]}>"
+            add(f"{tag} 原样复用这段音频")
+            return tag
+        return match.group(0)  # 未引用/无媒体 → 原样保留
+
+    return _LIB_RE.sub(repl, text), annos
+
+
+def _load_global_library():
+    """从磁盘读永久素材库清单（input/zoey_library/library.json，与 server 一致）。"""
+    try:
+        import folder_paths
+        path = os.path.join(folder_paths.get_input_directory(), _LIB_SUBFOLDER, "library.json")
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entries = data.get("entries", []) if isinstance(data, dict) else []
+        return entries if isinstance(entries, list) else []
+    except Exception:
+        return []
+
+
+def _load_image(rel_path):
+    """按 input 目录相对路径加载为 IMAGE 张量。"""
+    import nodes
+    img, _ = nodes.LoadImage().load_image(rel_path)
+    return img
+
+
+def _load_audio(rel_path):
+    """按 input 目录相对路径加载为 {"waveform":[B,C,L],"sample_rate":sr}。
+
+    get_full_path("input", ...) 在部分环境下搜不到子目录文件，直接按上传路径拼接。
+    """
+    import folder_paths
+    import torchaudio
+    abs_path = os.path.join(folder_paths.get_input_directory(), rel_path)
+    if not os.path.isfile(abs_path):
+        raise ValueError(f"素材库音频文件不存在：{rel_path}（{abs_path}）")
+    waveform, sr = torchaudio.load(abs_path)
+    return {"waveform": waveform.unsqueeze(0), "sample_rate": sr}
+
+
+def _inject_library(ref_images, ref_audios, img_order, aud_order, entries):
+    """把被引用的素材库媒体 load 进 ref_images/ref_audios（保持编号顺序）。"""
+    for idx, kind in img_order:
+        e = entries[idx]
+        rel = f"{_LIB_SUBFOLDER}/{e['file']}"
+        try:
+            ref_images[f"lib_img_{idx}"] = _load_image(rel)
+        except Exception as err:
+            raise ValueError(f"素材库图片加载失败：{e.get('file')}（{err}）") from err
+    for idx, kind in aud_order:
+        e = entries[idx]
+        rel = f"{_LIB_SUBFOLDER}/{e['audio_file'] if kind == 'voice' else e['file']}"
+        try:
+            ref_audios[f"lib_aud_{idx}"] = _load_audio(rel)
+        except Exception as err:
+            raise ValueError(f"素材库音频加载失败：{e.get('audio_file') if kind == 'voice' else e.get('file')}（{err}）") from err
+
+
+def _expand_char_tags(text, char_pic):
+    """把 @C1/@c1/@char1... 展开为 <Picture N>（char_pic: {角色序号: Picture 编号}）。"""
+    def repl(match):
+        pic = char_pic.get(int(match.group(1)))
+        if pic is None:
+            return match.group(0)  # 未分配角色，原样保留
+        return f"<Picture {pic}>"
+    return _CAST_RE.sub(repl, text)
+
+
+def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of):
+    """导演台：分镜拼成 CUT/TRANSITION + 对白 + 角色人物参考 + 音效/配乐 + 总时长。
+
+    数据结构：
+      {"ref_decl", "characters":[{"slot","name"}], "speakers":[{"id","desc"}],
+       "soundscape", "music", "shots":[{"prompt","duration","transition","dialogue":[{"speaker","lang","text"}]}]}
+    兼容旧格式：直接传镜头数组 / 无新增字段。
+    返回 (提示词文本, 总时长(秒), 是否已写用户参考说明)。
     """
     try:
         data = json.loads(shots_json or "{}")
     except Exception:
         data = {}
     ref_decl = ""
+    characters = []
+    speakers = {}
+    soundscape = ""
+    music = ""
+    consistent = True
     if isinstance(data, dict):
         shots = data.get("shots") or []
         ref_decl = str(data.get("ref_decl", "")).strip()
+        characters = data.get("characters") or []
+        for sp in (data.get("speakers") or []):
+            if isinstance(sp, dict) and str(sp.get("id", "")).strip():
+                speakers[str(sp.get("id")).strip()] = str(sp.get("desc", "")).strip()
+        soundscape = str(data.get("soundscape", "")).strip()
+        music = str(data.get("music", "")).strip()
+        consistent = bool(data.get("consistent", True))
     elif isinstance(data, list):
         shots = data
     else:
@@ -108,27 +306,85 @@ def _compose_director(shots_json, counts):
     if not isinstance(shots, list) or not shots:
         raise ValueError("导演台：请至少添加一个镜头（点击「＋ 添加镜头」）")
 
+    # 角色槽 -> <Picture K>（图片按已连接槽位顺序编号，与前端 collectEntries 一致）
+    image_slots = sorted(image_slots or [])
+    char_pic = {}
+    for i, ch in enumerate(characters, start=1):
+        if not isinstance(ch, dict):
+            continue
+        try:
+            slot = int(ch.get("slot"))
+        except (TypeError, ValueError):
+            continue
+        if slot in image_slots:
+            char_pic[i] = image_slots.index(slot) + 1
+
+    # 声明块：用户参考说明（可空）+ 角色人物参考行 + 素材库用途标注
+    decl_parts = []
+    lib_annos = []
+    if ref_decl:
+        ref_decl, a = _expand_library_tags(ref_decl, library, pic_of, aud_of)
+        lib_annos.extend(a)
+        decl_parts.append(expand_at_tags(ref_decl, counts))
+    for i, ch in enumerate(characters, start=1):
+        pic = char_pic.get(i)
+        if pic is None:
+            continue
+        name = str(ch.get("name", "")).strip() if isinstance(ch, dict) else ""
+        if name:
+            decl_parts.append(f"<Picture {pic}> 是{name}的人物参考（锁定脸和服装）")
+        else:
+            decl_parts.append(f"<Picture {pic}> 是人物参考（锁定脸和服装）")
+
     parts = []
     total = 0.0
     for i, shot in enumerate(shots):
         if not isinstance(shot, dict) or not str(shot.get("prompt", "")).strip():
             raise ValueError(f"导演台：CUT {i + 1} 缺少提示词")
-        prompt_text = expand_at_tags(str(shot.get("prompt", "")).strip(), counts)
+        shot_text, a = _expand_library_tags(_expand_char_tags(str(shot.get("prompt", "")).strip(), char_pic),
+                                            library, pic_of, aud_of)
+        lib_annos.extend(a)
+        shot_text = expand_at_tags(shot_text, counts)
+        # 跨镜一致性约束：从第二镜起补一句保持角色/场景/服装一致
+        if i > 0 and consistent:
+            shot_text += "\n保持与上一镜相同的角色、场景、服装与光线。"
+        # 对白：身份描述（可空）+ (Sx) + <d>[语言] 原文</d>
+        for d in shot.get("dialogue") or []:
+            if not isinstance(d, dict):
+                continue
+            text = str(d.get("text", "")).strip()
+            if not text:
+                continue
+            spk = str(d.get("speaker", "")).strip() or "S1"
+            lang = str(d.get("lang", "")).strip() or "English"
+            desc = speakers.get(spk, "")
+            if desc:
+                shot_text += f"\n{desc} ({spk}) says: <d>[{lang}] {text}.</d>"
+            else:
+                shot_text += f"\n({spk}) says: <d>[{lang}] {text}.</d>"
         if i == 0:
-            parts.append(f"CUT 1: {prompt_text}")
+            parts.append(f"CUT 1: {shot_text}")
         else:
             transition = str(shot.get("transition", "")).strip()
             if transition:
                 parts.append(f"TRANSITION: {transition}")
-            parts.append(f"CUT {i + 1}: {prompt_text}")
+            parts.append(f"CUT {i + 1}: {shot_text}")
         try:
             total += float(shot.get("duration", 5.0))
         except Exception:
             total += 5.0
 
-    if ref_decl:
-        ref_decl = expand_at_tags(ref_decl, counts)
-    return "\n".join(parts), min(total, 15.0), ref_decl
+    if soundscape:
+        parts.append(f"overall_soundscape: {soundscape}")
+    if music:
+        parts.append(f"non_diegetic_music: {music}")
+
+    if lib_annos:
+        # 跨镜头/ref_decl 出现的 @L 标注合并去重
+        decl_parts.extend(list(dict.fromkeys(lib_annos)))
+    if decl_parts:
+        parts.insert(0, "\n".join(decl_parts))
+    return "\n".join(parts), min(total, 15.0), bool(ref_decl)
 
 
 class ZoeyMiniMaxH3ReferenceToVideo:
@@ -178,6 +434,11 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "default": "[]",
                     "placeholder": "导演台分镜数据（前端自动生成）",
                 }),
+                "library": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "placeholder": "永久全局素材库（前端渲染，值不存工作流）",
+                }),
             },
             "optional": optional,
         }
@@ -188,7 +449,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
     CATEGORY = "Zoey Tool/MiniMax H3"
 
     def process(self, clip, vae, audio_vae, prompt, resolution, aspect, duration,
-                ref_image_size, auto_declaration, director_mode, director_shots, **refs):
+                ref_image_size, auto_declaration, director_mode, director_shots, library="", **refs):
         ref_images = {}
         for i in range(_IMAGE_SLOTS):
             ref_images[f"ref_image_{i}"] = refs.get(f"ref_image_{i}")
@@ -212,26 +473,45 @@ class ZoeyMiniMaxH3ReferenceToVideo:
 
         width, height = _compute_canvas(ref_images, resolution, aspect)
 
+        # 永久全局素材库：从磁盘读清单，仅对提示词里 @L 引用的条目注入媒体
+        library = _load_global_library()
+        image_slots = sorted(i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
+        audio_slots = sorted(i for i in range(_AUDIO_SLOTS) if refs.get(f"ref_audio_{i}") is not None)
+        paired_audio = sum(
+            1 for i in range(_VIDEO_SLOTS)
+            if refs.get(f"ref_video_{i}") is not None and refs.get(f"ref_video_audio_{i}") is not None)
+
+        pic_of = aud_of = {}
+        img_order = aud_order = []
         if director_mode:
-            cut_text, total_duration, ref_decl = _compose_director(director_shots, counts)
-            if ref_decl:
-                # 用户写了参考素材说明（@ 已展开），优先用它
-                composed = ref_decl + "\n" + cut_text
-            else:
-                composed = cut_text
-                if auto_declaration:
-                    declaration = build_declaration(counts)
-                    if declaration:
-                        composed = declaration + "\n" + composed
+            referenced = _referenced_from_director(director_shots)
+            pic_of, aud_of, img_order, aud_order = _library_plan(
+                library, referenced, image_slots, paired_audio, audio_slots)
+            composed, total_duration, has_user_decl = _compose_director(
+                director_shots, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of)
+            if not has_user_decl and auto_declaration:
+                declaration = build_declaration(counts)
+                if declaration:
+                    composed = declaration + "\n" + composed
             prompt_text = composed
             length = _frame_count(total_duration)
         else:
             prompt_text = expand_at_tags(prompt, counts)
+            pic_of, aud_of, img_order, aud_order = _library_plan(
+                library, _referenced_indexes(prompt), image_slots, paired_audio, audio_slots)
+            prompt_text, lib_annos = _expand_library_tags(prompt_text, library, pic_of, aud_of)
+            decl = []
             if auto_declaration:
                 declaration = build_declaration(counts)
                 if declaration:
-                    prompt_text = declaration + "\n" + prompt_text
+                    decl.append(declaration)
+            decl.extend(lib_annos)
+            if decl:
+                prompt_text = "\n".join(decl) + "\n" + prompt_text
             length = _frame_count(duration)
+
+        if img_order or aud_order:
+            _inject_library(ref_images, ref_audios, img_order, aud_order, library)
 
         outputs = MiniMaxH3ReferenceToVideo.execute(
             clip, vae, audio_vae, prompt_text, width, height, length,
