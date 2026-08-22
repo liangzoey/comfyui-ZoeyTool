@@ -132,14 +132,88 @@ const STYLE = `
   opacity: .7;
 }
 .zoey-ref-strip {
-  flex: 0 0 64px;
+  flex: 0 0 auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   overflow-x: auto;
   padding: 4px 6px;
   box-sizing: border-box;
   border-top: 1px solid rgba(255,255,255,.06);
+}
+.zoey-ref-preview-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.zoey-ref-purpose {
+  width: 52px;
+}
+/* 自定义下拉按钮（替代原生 select，Chrome 深色主题下原生选项看不清） */
+.zoey-pop-select {
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid #8a8a8a;
+  border-radius: 4px;
+  background: #2e2e2e;
+  color: #f0f0f0;
+  cursor: pointer;
+  padding: 1px 4px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  transition: border-color .15s ease, color .15s ease;
+}
+.zoey-pop-select:hover {
+  border-color: #7ec8ff;
+  color: #fff;
+}
+/* ---- 简单模式编译预览 ---- */
+.zoey-preview-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 2px 4px 0;
+}
+.zoey-preview-btn {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: rgba(255, 255, 255, .05);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.zoey-preview-btn:hover,
+.zoey-preview-btn.active {
+  border-color: #7ec8ff;
+  color: #7ec8ff;
+}
+.zoey-simple-preview {
+  flex: 0 0 auto;
+  width: 100%;
+  height: 88px;
+  box-sizing: border-box;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .35);
+  color: #9ec7ff;
+  font-size: 10px;
+  font-family: monospace;
+  line-height: 1.4;
+  padding: 3px 5px;
+}
+.zoey-preview-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: .8;
+  color: var(--input-text, #ddd);
+  padding: 2px 4px;
+}
+.zoey-preview-meta.warn {
+  color: #f88;
 }
 .zoey-ref-preview-item {
   position: relative;
@@ -213,13 +287,67 @@ const STYLE = `
   color: #aaa;
   user-select: none;
 }
-/* ---- 富文本 prompt 编辑器（含下方预览条，合并为一个控件避免 widgets_values 错位） ---- */
+/* ---- 富文本 prompt 编辑器（创作区卡片：顶部模式条 + 编辑框 + 预览条，合并为一个控件避免 widgets_values 错位） ---- */
 .zoey-prompt-container {
-  --comfy-widget-height: 170px;
+  --comfy-widget-height: 280px;
+  height: var(--comfy-widget-height);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
+  background: rgba(126, 200, 255, .045);
+  border: 1px solid rgba(126, 200, 255, .16);
+  border-radius: 6px;
+}
+/* 模式切换：参考 / T2V / I2V / 自动（创作区顶部分段开关） */
+.zoey-mode-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(126, 200, 255, .10);
+  background: rgba(126, 200, 255, .05);
+}
+.zoey-mode-bar .mode-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #7ec8ff;
+  letter-spacing: 1px;
+  margin-right: 4px;
+  flex: 0 0 auto;
+}
+.zoey-mode-btn {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 2px 0;
+  border-radius: 4px;
+  border: 1px solid #3a3a3a;
+  background: rgba(255, 255, 255, .04);
+  color: #bbb;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+  transition: all .15s ease;
+}
+.zoey-mode-btn:hover {
+  border-color: #7ec8ff;
+  color: #fff;
+}
+.zoey-mode-btn.active {
+  border-color: #7ec8ff;
+  background: rgba(126, 200, 255, .18);
+  color: #7ec8ff;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(126, 200, 255, .25);
+}
+/* mode 值持有控件：隐藏（UI 顶部模式条控制），仅用于后端取值的序列化 */
+.zoey-mode-holder {
+  --comfy-widget-height: 0px;
+  --comfy-widget-min-height: 0px;
+  --comfy-widget-max-height: 0px;
+  display: none;
 }
 .zoey-prompt-editor {
   flex: 1 1 auto;
@@ -230,9 +358,16 @@ const STYLE = `
   padding: 4px 6px;
   box-sizing: border-box;
   outline: none;
+  border: 1px solid #666;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .30);
   font-size: var(--comfy-textarea-font-size, 12px);
   line-height: 1.5;
   color: var(--input-text, #ddd);
+}
+.zoey-prompt-editor:focus {
+  border-color: #7ec8ff;
+  box-shadow: 0 0 0 1px rgba(126, 200, 255, .30);
 }
 .zoey-prompt-editor:empty::before {
   content: attr(data-placeholder);
@@ -277,9 +412,9 @@ const STYLE = `
   color: #7ec8ff;
   font-family: monospace;
 }
-/* ---- 时长滑动条（含快捷预设与状态行） ---- */
+/* ---- 时长滑动条（滑杆行内嵌状态小字 + 快捷预设） ---- */
 .zoey-duration {
-  --comfy-widget-height: 96px;
+  --comfy-widget-height: 62px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -320,11 +455,14 @@ const STYLE = `
   border-color: #7ec8ff;
 }
 .zoey-duration-status {
-  font-size: 11px;
-  opacity: .75;
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  opacity: .7;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
   color: var(--input-text, #ddd);
 }
 /* ---- 导演台（分镜列表） ---- */
@@ -336,6 +474,9 @@ const STYLE = `
   padding: 4px 6px;
   box-sizing: border-box;
   overflow-y: auto;
+  background: rgba(255, 255, 255, .025);
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 6px;
 }
 .zoey-director-header {
   display: flex;
@@ -343,6 +484,7 @@ const STYLE = `
   justify-content: space-between;
   font-size: 12px;
   font-weight: 600;
+  color: #7ec8ff;
 }
 .zoey-director-header button {
   font-size: 11px;
@@ -713,6 +855,9 @@ const STYLE = `
   gap: 4px;
   padding: 4px 6px;
   box-sizing: border-box;
+  background: rgba(255, 255, 255, .025);
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 6px;
 }
 .zoey-library-list {
   flex: 1 1 auto;
@@ -729,11 +874,12 @@ const STYLE = `
 }
 .zoey-library-row select {
   width: 44px;
-  border: 1px solid #333;
+  border: 1px solid #8a8a8a;
   border-radius: 4px;
-  background: rgba(255, 255, 255, .04);
-  color: var(--input-text, #ddd);
-  font-size: 11px;
+  background: #2e2e2e;
+  color: #f0f0f0;
+  font-size: 12px;
+  font-weight: 600;
   padding: 1px 2px;
 }
 .zoey-library-slot {
@@ -1134,9 +1280,139 @@ function caretTexts(el) {
 }
 
 // ---- 创建 contenteditable prompt 控件（含下方预览条，合并为一个控件） ----
+const MODE_OPTIONS = ["参考", "T2V", "I2V", "自动"];
+const MODE_HINTS = {
+  "参考": "参考转视频：用 @P1/@V1/@A1 引用素材",
+  "T2V": "纯文生视频（忽略参考素材）",
+  "I2V": "图生视频：第一张已连接参考图作首帧；≥2 张时最后一张作尾帧",
+  "自动": "自动：有视频/音频→参考；单图→I2V；多图→参考；无素材→T2V",
+};
+
+// 参考图用途标注（官方手册：参考图必须标注用途，否则保主体不保背景）
+const REF_PURPOSE_OPTIONS = [
+  { key: "", label: "用途…" },
+  { key: "character", label: "人物", line: (k) => `<Picture ${k}> 是人物参考（锁定脸和服装）` },
+  { key: "scene", label: "场景", line: (k) => `<Picture ${k}> 是场景参考（背景完全一致）` },
+  { key: "style", label: "风格", line: (k) => `<Picture ${k}> 是风格参考（匹配这种美术风格）` },
+  { key: "composition", label: "构图", line: (k) => `<Picture ${k}> 是构图参考（匹配这个取景）` },
+  { key: "object", label: "物体", line: (k) => `<Picture ${k}> 是物体参考（保持这件物品原样）` },
+  { key: "first_frame", label: "首帧", line: (k) => `<Picture ${k}> 是首帧参考` },
+  { key: "last_frame", label: "尾帧", line: (k) => `<Picture ${k}> 是尾帧参考` },
+  { key: "motion", label: "动作", line: (k) => `<Picture ${k}> 是动作参考（沿用它的动作）` },
+];
+
+// 自定义下拉：原生 <select> 在 Chrome 深色主题下选项看不清，改为按钮 + 弹出列表
+// options: [{value, label, hint?}]，get 返回当前 value，set(value) 处理选择
+function buildPopSelect({ title, options, get, set }) {
+  const btn = document.createElement("button");
+  btn.className = "zoey-pop-select";
+  btn.title = title || "";
+  const sync = () => {
+    const cur = get();
+    const opt = options.find((o) => o.value === cur);
+    btn.textContent = opt ? opt.label : "…";
+  };
+  sync();
+  btn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = $el("div", { className: "zoey-ref-picker" });
+    const r = btn.getBoundingClientRect();
+    const items = options.map((o) =>
+      $el("div", {
+        className: "zoey-ref-item" + (o.value === get() ? " zoey-ref-item--selected" : ""),
+        onclick: () => {
+          box.remove();
+          set(o.value);
+          sync();
+        },
+      }, [$el("div", { className: "zoey-ref-meta" }, [
+        $el("div", { className: "zoey-ref-label", textContent: o.label }),
+        o.hint ? $el("div", { className: "zoey-ref-hint", textContent: o.hint }) : null,
+      ])])
+    );
+    box.replaceChildren($el("div", { className: "zoey-ref-header", textContent: title || "" }), ...items);
+    document.body.appendChild(box);
+    const bw = box.offsetWidth;
+    const bh = box.offsetHeight;
+    box.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - bw - 8))}px`;
+    box.style.top = (r.bottom + 4 + bh > window.innerHeight && r.top - 4 - bh > 0)
+      ? `${r.top - bh - 4}px`
+      : `${r.bottom + 4}px`;
+    const dismiss = (ev) => {
+      if (!box.contains(ev.target)) {
+        box.remove();
+        document.removeEventListener("pointerdown", dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener("pointerdown", dismiss), 0);
+  });
+  return btn;
+}
+
+// 与后端 _build_purpose_lines 对齐：读 ref_purposes JSON 生成用途标注行
+function purposeLinesJs(node) {
+  const w = node.widgets?.find((x) => x.name === "ref_purposes");
+  let map = {};
+  try { map = JSON.parse(w?.value || "{}") || {}; } catch (e) { map = {}; }
+  const slots = [];
+  for (const input of node.inputs || []) {
+    if (input.link == null) continue;
+    const m = input.name?.match(/^ref_image_(\d+)$/);
+    if (m) slots.push(+m[1]);
+  }
+  slots.sort((a, b) => a - b);
+  const lines = [];
+  for (const [slotStr, key] of Object.entries(map)) {
+    const slot = +slotStr;
+    const idx = slots.indexOf(slot);
+    if (idx < 0) continue;
+    const opt = REF_PURPOSE_OPTIONS.find((o) => o.key === key);
+    if (opt && opt.line) lines.push(opt.line(idx + 1));
+  }
+  return lines;
+}
+
+// 顶部模式切换条：挂在 prompt 容器里；通过隐藏的 mode 控件把值同步给后端
+function buildModeBar(node) {
+  const bar = document.createElement("div");
+  bar.className = "zoey-mode-bar";
+  const label = document.createElement("span");
+  label.className = "mode-label";
+  label.textContent = "模式";
+  bar.appendChild(label);
+  const buttons = {};
+  for (const m of MODE_OPTIONS) {
+    const b = document.createElement("button");
+    b.className = "zoey-mode-btn";
+    b.textContent = m;
+    b.title = MODE_HINTS[m] || "";
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (node._zoeyModeWidget) {
+        node._zoeyModeWidget.value = m;
+        app.graph?.setDirtyCanvas(true);
+      }
+    });
+    bar.appendChild(b);
+    buttons[m] = b;
+  }
+  const setActive = (m) => {
+    const active = MODE_OPTIONS.includes(m) ? m : MODE_OPTIONS[0];
+    for (const k of MODE_OPTIONS) buttons[k].classList.toggle("active", k === active);
+  };
+  bar.setActive = setActive;
+  node._zoeyModeBar = { setActive };
+  setActive(MODE_OPTIONS[0]);
+  return bar;
+}
+
 function createPromptEditor(node, name, inputData) {
   const container = document.createElement("div");
   container.className = "zoey-prompt-container";
+
+  container.appendChild(buildModeBar(node));
 
   const editor = document.createElement("div");
   editor.className = "zoey-prompt-editor";
@@ -1149,6 +1425,66 @@ function createPromptEditor(node, name, inputData) {
   strip.className = "zoey-ref-strip";
   container.appendChild(strip);
 
+  // 简单模式编译预览：展示最终发给模型的提示词（@展开+声明+用途+引号转对白）
+  const previewRow = document.createElement("div");
+  previewRow.className = "zoey-preview-row";
+  const previewBtn = document.createElement("button");
+  previewBtn.className = "zoey-preview-btn";
+  previewBtn.textContent = "👁 预览最终提示词";
+  previewRow.appendChild(previewBtn);
+  const previewBox = document.createElement("textarea");
+  previewBox.className = "zoey-simple-preview";
+  previewBox.readOnly = true;
+  previewBox.spellcheck = false;
+  previewBox.style.display = "none";
+  const previewMeta = document.createElement("div");
+  previewMeta.className = "zoey-preview-meta";
+  previewMeta.style.display = "none";
+  container.append(previewRow, previewBox, previewMeta);
+
+  function updatePreview() {
+    if (previewBox.style.display === "none") return;
+    try {
+      previewBox.value = composeSimplePreview(node, serializePrompt(editor));
+    } catch (err) {
+      console.error("[Zoey MiniMax H3] preview:", err);
+      previewBox.value = String(err?.message || err);
+    }
+    const text = serializePrompt(editor);
+    const chars = text.length;
+    const over = chars > 7000;
+    const slots = [];
+    for (const input of node.inputs || []) {
+      if (input.link == null) continue;
+      const m = input.name?.match(/^ref_image_(\d+)$/);
+      if (m) slots.push(+m[1]);
+    }
+    slots.sort((a, b) => a - b);
+    const used = new Set();
+    for (const m of text.matchAll(/@[Pp]\d+/g)) used.add(m[0].toUpperCase());
+    const unused = slots.map((s, i) => ({ s, tag: `@P${i + 1}` })).filter((x) => !used.has(x.tag)).map((x) => x.tag);
+    const parts = [`${chars} 字符（上限7000）`];
+    if (over) parts.push("⚠ 超出官方上限，可能被截断");
+    if (unused.length) parts.push(`已连接未用: ${unused.join(", ")}`);
+    previewMeta.textContent = parts.join(" ｜ ");
+    previewMeta.classList.toggle("warn", over || unused.length > 0);
+  }
+
+  previewBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const show = previewBox.style.display === "none";
+    strip.style.display = show ? "none" : "";
+    previewBox.style.display = show ? "" : "none";
+    previewMeta.style.display = show ? "" : "none";
+    previewBtn.classList.toggle("active", show);
+    if (show) updatePreview();
+  });
+  // 素材库异步加载完成后，若预览已展开则刷新 @L 展开结果
+  document.addEventListener("zoey:library-loaded", () => {
+    if (previewBox.style.display !== "none") updatePreview();
+  });
+
   const widget = new DOMWidgetImpl({
     node,
     name,
@@ -1158,11 +1494,41 @@ function createPromptEditor(node, name, inputData) {
       hideOnZoom: true,
       getValue: () => serializePrompt(editor),
       setValue: (v) => renderPrompt(editor, v ?? "", node),
+      // 不固定：提示词编辑区高度 = 节点总高 − 其余控件高，节点拉大它就变大（280~820px）
+      afterResize() { syncPromptHeight(); },
     },
   });
   widget.inputEl = editor;
   widget.strip = strip;
   addWidget(node, widget);
+
+  // 计算并应用提示词区高度（按节点高度比例，节点拉大/缩小都跟随；280~900px）
+  function syncPromptHeight() {
+    try {
+      const h = node.size?.[1];
+      if (!h) return;
+      const ph = Math.max(280, Math.min(900, Math.round(h * 0.35)));
+      if (container.style.getPropertyValue("--comfy-widget-height") !== `${ph}px`) {
+        container.style.setProperty("--comfy-widget-height", `${ph}px`);
+        app.graph?.setDirtyCanvas(true);
+      }
+    } catch (e) {
+      console.error("[Zoey MiniMax H3] syncPromptHeight:", e);
+    }
+  }
+  // 暴露给 attachPicker：加载工作流后也同步一次（不只拖拽时才动）
+  node._zoeySyncPromptHeight = syncPromptHeight;
+  // 轮询节点高度：节点被拖拽变大小时可靠同步（不依赖 afterResize 是否触发）
+  let _lastNodeH = node.size?.[1] || 0;
+  node._zoeySizePoller = setInterval(() => {
+    try {
+      const h = node.size?.[1];
+      if (h && Math.abs(h - _lastNodeH) > 2) {
+        _lastNodeH = h;
+        syncPromptHeight();
+      }
+    } catch (e) { /* 轮询错误忽略 */ }
+  }, 400);
 
   editor.addEventListener("paste", (e) => {
     e.preventDefault();
@@ -1171,6 +1537,9 @@ function createPromptEditor(node, name, inputData) {
     insertTextAtCaret(editor, text);
   });
   editor.addEventListener("drop", (e) => e.preventDefault());
+  editor.addEventListener("input", () => {
+    if (previewBox.style.display !== "none") updatePreview();
+  });
   // Enter 的换行逻辑统一放在 RefPicker.#onKeyDown，避免重复插入
 
   return widget;
@@ -1191,7 +1560,7 @@ function insertTextAtCaret(editor, text) {
 }
 
 // ---- 时长滑动条控件（滑动条 + 快捷预设 + 状态行） ----
-const DURATION_PRESETS = [3, 5, 8, 10, 15];
+const DURATION_PRESETS = [1, 2, 4, 5, 8, 10, 15]; // 输出范围 1-15s
 
 function createDurationWidget(node, name, inputData) {
   const container = document.createElement("div");
@@ -1206,7 +1575,10 @@ function createDurationWidget(node, name, inputData) {
   slider.step = "0.5";
   const valueLabel = document.createElement("span");
   valueLabel.className = "zoey-duration-value";
-  row.append(slider, valueLabel);
+  // 状态行并入滑杆行：图×n 视频×n 音频×n ｜ 分辨率 ｜ 帧数，右侧小字（占位无独立整行）
+  const status = document.createElement("span");
+  status.className = "zoey-duration-status";
+  row.append(slider, valueLabel, status);
 
   const presets = document.createElement("div");
   presets.className = "zoey-duration-presets";
@@ -1217,10 +1589,7 @@ function createDurationWidget(node, name, inputData) {
     presets.appendChild(b);
   }
 
-  const status = document.createElement("div");
-  status.className = "zoey-duration-status";
-
-  container.append(row, presets, status);
+  container.append(row, presets);
 
   let current = parseFloat(inputData?.[1]?.default ?? 5) || 5;
 
@@ -1297,6 +1666,65 @@ function createDurationWidget(node, name, inputData) {
 
   syncUI();
   setTimeout(refreshStatus, 200);
+  return widget;
+}
+
+// ---- 模式值持有控件（隐藏，仅用于序列化；顶部模式条控制它） ----
+function createModeWidget(node, name, inputData) {
+  const holder = document.createElement("div");
+  holder.className = "zoey-mode-holder";
+  const options = (inputData && inputData[1]) || {};
+  let current = MODE_OPTIONS.includes(options.default) ? options.default : MODE_OPTIONS[0];
+  const widget = new DOMWidgetImpl({
+    node,
+    name,
+    type: "customtext",
+    element: holder,
+    options: {
+      hideOnZoom: true,
+      getValue: () => current,
+      setValue: (v) => {
+        const m = MODE_OPTIONS.includes(v) ? v : MODE_OPTIONS[0];
+        current = m;
+        if (node._zoeyModeBar) node._zoeyModeBar.setActive(m);
+        node._zoeyDirector?.composePreview?.();
+      },
+    },
+  });
+  widget.inputEl = holder;
+  widget.hidden = true; // 值持有控件：不占位、不可见，仅参与序列化
+  addWidget(node, widget);
+  node._zoeyModeWidget = widget;
+  if (node._zoeyModeBar) node._zoeyModeBar.setActive(current);
+  return widget;
+}
+
+// ---- 参考图用途标注值持有控件（隐藏；预览条用途下拉控制它，序列化 {槽位: 用途key}） ----
+function createRefPurposesWidget(node, name, inputData) {
+  const holder = document.createElement("div");
+  holder.className = "zoey-mode-holder";
+  if (!node._zoeyRefPurposes) node._zoeyRefPurposes = {};
+  const widget = new DOMWidgetImpl({
+    node,
+    name,
+    type: "customtext",
+    element: holder,
+    options: {
+      hideOnZoom: true,
+      getValue: () => JSON.stringify(node._zoeyRefPurposes || {}),
+      setValue: (v) => {
+        try {
+          node._zoeyRefPurposes = JSON.parse(v || "{}") || {};
+        } catch (e) {
+          node._zoeyRefPurposes = {};
+        }
+        if (node._zoeyRefreshRefStrip) node._zoeyRefreshRefStrip();
+      },
+    },
+  });
+  widget.inputEl = holder;
+  widget.hidden = true;
+  addWidget(node, widget);
   return widget;
 }
 
@@ -1468,6 +1896,29 @@ function libraryPlan(node, referenced) {
   return { pic_of, aud_of, imgOrder, audOrder };
 }
 
+// 引号台词自动转 <d>[语种] 内容</d>（与后端 _convert_quoted_dialogue/_detect_lang 对齐）
+function detectLangJs(text) {
+  if (/[぀-ヿ]/.test(text)) return "Japanese";
+  if (/[가-힣]/.test(text)) return "Korean";
+  if (/[一-鿿]/.test(text)) return "Chinese";
+  if (/[Ѐ-ӿ]/.test(text)) return "Russian";
+  if (/[฀-๿]/.test(text)) return "Thai";
+  if (/[؀-ۿ]/.test(text)) return "Arabic";
+  return "English";
+}
+function convertDialogueJs(text) {
+  if (!text) return text;
+  return String(text).replace(/「([^」\n]*)」|『([^』\n]*)』|“([^”\n]*)”|"([^"\n]*)"/g, (m, a, b, c, d) => {
+    const content = (a || b || c || d || "").trim();
+    if (!content) return m;
+    return `<d>[${detectLangJs(content)}] ${content}</d>`;
+  });
+}
+function dialogueConvertEnabled(node) {
+  const w = node.widgets?.find((x) => x.name === "dialogue_convert");
+  return w ? !!w.value : true;
+}
+
 // 编译预览：把导演台数据拼成最终发给模型的提示词（与后端 _compose_director 对齐）
 function composeDirector(node, d) {
   const chars = d.characters || [];
@@ -1539,12 +1990,15 @@ function composeDirector(node, d) {
 
   const parts = [];
   const consistent = d.consistent !== false;
+  const dialogueConvert = dialogueConvertEnabled(node);
   (d.shots || []).forEach((shot, i) => {
     if (i > 0) {
       const tr = (shot.transition || "").trim();
       if (tr) parts.push(`TRANSITION: ${tr}`);
     }
-    let shotText = expand(shot.prompt || "").trim();
+    let shotText = String(shot.prompt || "");
+    if (dialogueConvert) shotText = convertDialogueJs(shotText);
+    shotText = expand(shotText).trim();
     if (i > 0 && consistent) shotText += "\n保持与上一镜相同的角色、场景、服装与光线。";
     for (const dl of shot.dialogue || []) {
       const text = (dl.text || "").trim();
@@ -1569,7 +2023,98 @@ function composeDirector(node, d) {
     const bd = buildDeclarationJs(node);
     if (bd) parts.unshift(bd);
   }
+  const purposeLines = purposeLinesJs(node);
+  if (purposeLines.length) parts.unshift(purposeLines.join("\n"));
   return parts.join("\n");
+}
+
+// T2V/I2V 编译预览：与后端 _compose_plain_director 对齐（不做 @ 展开）
+function composePlainDirector(node, d) {
+  const speakers = {};
+  (d.speakers || []).forEach((sp) => { if (sp && sp.id) speakers[sp.id] = sp.desc || ""; });
+  const parts = [];
+  const consistent = d.consistent !== false;
+  const dialogueConvert = dialogueConvertEnabled(node);
+  (d.shots || []).forEach((shot, i) => {
+    if (i > 0) {
+      const tr = (shot.transition || "").trim();
+      if (tr) parts.push(`TRANSITION: ${tr}`);
+    }
+    let t = String(shot.prompt || "");
+    if (dialogueConvert) t = convertDialogueJs(t);
+    t = t.trim();
+    if (i > 0 && consistent) t += "\n保持与上一镜相同的角色、场景、服装与光线。";
+    for (const dl of shot.dialogue || []) {
+      const text = (dl.text || "").trim();
+      if (!text) continue;
+      const spk = (dl.speaker || "").trim() || "S1";
+      const lang = (dl.lang || "").trim() || "English";
+      const desc = speakers[spk];
+      t += desc
+        ? `\n${desc} (${spk}) says: <d>[${lang}] ${text}.</d>`
+        : `\n(${spk}) says: <d>[${lang}] ${text}.</d>`;
+    }
+    parts.push(`CUT ${i + 1}: ${t}`);
+  });
+  if ((d.soundscape || "").trim()) parts.push(`overall_soundscape: ${d.soundscape.trim()}`);
+  if ((d.music || "").trim()) parts.push(`non_diegetic_music: ${d.music.trim()}`);
+  return parts.join("\n");
+}
+
+// 简单模式编译预览：与后端 _run_ref2va 非导演台路径对齐
+function composeSimplePreview(node, text) {
+  const modeW = node.widgets?.find((w) => w.name === "mode");
+  const mode = modeW ? modeW.value : "参考";
+  let out = dialogueConvertEnabled(node) ? convertDialogueJs(text) : text;
+  if (mode === "T2V" || mode === "I2V") return out; // 后端不展开 @、不加声明
+
+  out = out.replace(/@([PpVv])(\d+)/g, (m, tag, num) => `<${tag.toUpperCase() === "P" ? "Picture" : "Video"} ${num}>`);
+  out = out.replace(/@[Aa](\d+)/g, (m, n) => `<Audio ${n}>`);
+
+  const libInfo = libraryInfo(node);
+  const refIdx = new Set();
+  for (const m of String(text).matchAll(/@[Ll](\d+)/g)) refIdx.add(+m[1] - 1);
+  const libPlan = libraryPlan(node, [...refIdx]);
+  const libAnnos = [];
+  const seen = new Set();
+  out = out.replace(/@[Ll](\d+)/g, (m, n) => {
+    const i = +n - 1;
+    const e = libInfo.lib[i];
+    if (!e || typeof e !== "object") return m;
+    let line = null, tag = null;
+    if (i in libPlan.pic_of) {
+      tag = `<Picture ${libPlan.pic_of[i]}>`;
+      const kind = e.kind || "";
+      const name = (e.name || "").trim();
+      if (kind === "character") {
+        line = name ? `${tag} 是${name}的人物参考（锁定脸和服装）` : `${tag} 是人物参考（锁定脸和服装）`;
+        const app = (e.appearance || "").trim();
+        if (app) line += `。外貌：${app}`;
+        if (i in libPlan.aud_of) line += `，音色参考 <Audio ${libPlan.aud_of[i]}>`;
+      } else if (kind === "prop") {
+        line = name ? `${tag} 是${name}的物体参考（保持原样）` : `${tag} 是物体参考（保持这件物品原样）`;
+      } else {
+        line = name ? `${tag} 是${name}的场景参考（背景完全一致）` : `${tag} 是场景参考（背景完全一致）`;
+      }
+    } else if (i in libPlan.aud_of) {
+      tag = `<Audio ${libPlan.aud_of[i]}>`;
+      line = `${tag} 原样复用这段音频`;
+    }
+    if (line && !seen.has(line)) { seen.add(line); libAnnos.push(line); }
+    return tag || m;
+  });
+
+  const decl = [];
+  decl.push(...purposeLinesJs(node));
+  const autoW = node.widgets?.find((w) => w.name === "auto_declaration");
+  const auto = autoW ? !!autoW.value : true;
+  if (auto) {
+    const bd = buildDeclarationJs(node);
+    if (bd) decl.push(bd);
+  }
+  decl.push(...libAnnos);
+  if (decl.length) out = decl.join("\n") + "\n" + out;
+  return out;
 }
 
 // 把文本追加到 editor 光标处（无光标时定位到末尾）
@@ -1642,7 +2187,7 @@ function createDirectorPanel(node, name, inputData) {
   let declPicker = null;
   let startTimes = [];
   // collectEntries 通过 node._zoeyDirector.characters 读角色槽（getter 保证与闭包同步）
-  node._zoeyDirector = { get characters() { return characters; } };
+  node._zoeyDirector = { get characters() { return characters; }, composePreview };
 
   const widget = new DOMWidgetImpl({
     node,
@@ -2133,7 +2678,11 @@ function createDirectorPanel(node, name, inputData) {
     const frames = frameCount(capped);
     total.textContent = `总时长 ${sum}s → ${capped}s (${frames}帧)` + (sum > MAX_TOTAL_SECONDS ? "  ⚠ 超15s将截断" : "");
     try {
-      preview.value = composeDirector(node, d);
+      const modeW = node.widgets?.find((w) => w.name === "mode");
+      const mode = modeW ? modeW.value : "参考";
+      preview.value = (mode === "T2V" || mode === "I2V")
+        ? composePlainDirector(node, d)
+        : composeDirector(node, d);
     } catch (e) {
       console.error("[Zoey MiniMax H3] composePreview:", e);
       preview.value = String(e?.message || e);
@@ -2268,17 +2817,16 @@ function createLibraryWidget(node, name, inputData) {
       uploadFileInto(entry, "file");
     });
 
-    const kindSel = document.createElement("select");
-    const KINDS = [["character", "角色"], ["prop", "道具"], ["scene", "场景"], ["audio", "音频"]];
-    for (const [k, label] of KINDS) {
-      const o = document.createElement("option");
-      o.value = k; o.textContent = label;
-      if (entry.kind === k) o.selected = true;
-    }
-    kindSel.addEventListener("change", () => {
-      entry.kind = kindSel.value;
-      renderLibrary();
-      scheduleSaveLibrary();
+    const kindSel = buildPopSelect({
+      title: "素材类型（角色=人物参考 / 道具 / 场景 / 音频）",
+      options: [["character", "角色"], ["prop", "道具"], ["scene", "场景"], ["audio", "音频"]]
+        .map(([v, l]) => ({ value: v, label: l })),
+      get: () => entry.kind,
+      set: (k) => {
+        entry.kind = k;
+        renderLibrary();
+        scheduleSaveLibrary();
+      },
     });
 
     const name = document.createElement("input");
@@ -2474,7 +3022,7 @@ class RefPicker {
       const hasAny = (this.node?.inputs || []).some((i) => i.link != null);
       this.dropdown.replaceChildren($el("div", {
         className: "zoey-ref-empty",
-        textContent: hasAny ? "没有匹配的参考素材" : "未连接参考素材，请先在节点上连接图片/视频/音频",
+        textContent: hasAny ? "没有匹配的参考素材" : "还没连接素材：把图片/视频拖到节点左侧 ref_image/ref_video 端口，提示词里用 @ 引用",
       }));
       return;
     }
@@ -2561,7 +3109,7 @@ class RefPicker {
       const hasAny = (this.node?.inputs || []).some((i) => i.link != null);
       this.strip.replaceChildren($el("div", {
         className: "zoey-ref-preview-hint",
-        textContent: hasAny ? "提示词里输入 @ 后选择参考素材，预览会显示在这里" : "未连接参考素材",
+        textContent: hasAny ? "在提示词里输入 @，选择已连接的素材（@P 图 / @V 视频 / @A 音频）" : "还没连接素材，先把图片/视频拖到左侧端口",
       }));
       return;
     }
@@ -2593,6 +3141,26 @@ class RefPicker {
       item = $el("div", { className: "zoey-ref-preview-item", title: entry.hint || entry.tag }, [media, tag]);
     }
     attachHover(item, entry);
+    // 已连接参考图（@P）：下方加用途标注下拉（官方要求，否则保主体不保背景）
+    if (entry.kind === "图") {
+      const node = this.node;
+      const wrap = $el("div", { className: "zoey-ref-preview-wrap" });
+      const btn = buildPopSelect({
+        title: `${entry.tag} 用途标注（官方要求：不标则保主体不保背景）`,
+        options: REF_PURPOSE_OPTIONS.map((o) => ({ value: o.key, label: o.label || "（不标注）" })),
+        get: () => (node._zoeyRefPurposes || {})[entry.slot] || "",
+        set: (key) => {
+          if (!node._zoeyRefPurposes) node._zoeyRefPurposes = {};
+          if (key) node._zoeyRefPurposes[entry.slot] = key;
+          else delete node._zoeyRefPurposes[entry.slot];
+          app.graph?.setDirtyCanvas(true);
+          this.refreshPreview();
+        },
+      });
+      btn.classList.add("zoey-ref-purpose");
+      wrap.append(item, btn);
+      return wrap;
+    }
     return item;
   }
 
@@ -2606,6 +3174,24 @@ class RefPicker {
 }
 
 // ---- 包装 STRING/FLOAT：prompt 换成富文本编辑器（含预览条），duration 换成秒计滑动条 ----
+// 中文化参数标签（只改显示名，参数名不变，不影响工作流序列化）
+const WIDGET_LABELS = {
+  "resolution": "分辨率",
+  "aspect": "比例",
+  "duration": "时长",
+  "ref_image_size": "参考图尺寸",
+  "auto_declaration": "自动声明",
+  "director_mode": "导演台",
+  "dialogue_convert": "引号转对白",
+  "mode": "模式",
+};
+function relabelWidget(node, inputName, widget) {
+  if (!widget || node?.comfyClass !== NODE_TYPE) return widget;
+  const label = WIDGET_LABELS[inputName];
+  if (label) widget.label = label;
+  return widget;
+}
+
 function patchWidgets() {
   if (ComfyWidgets.STRING.__zoeyRefPickerWrapped) return;
   ComfyWidgets.STRING.__zoeyRefPickerWrapped = true;
@@ -2625,7 +3211,12 @@ function patchWidgets() {
     if (node?.comfyClass === NODE_TYPE && inputName === "library") {
       return { widget: createLibraryWidget(node, inputName, inputData) };
     }
-    return origString.apply(this, arguments);
+    if (node?.comfyClass === NODE_TYPE && inputName === "ref_purposes") {
+      return { widget: createRefPurposesWidget(node, inputName, inputData) };
+    }
+    const strRes = origString.apply(this, arguments);
+    relabelWidget(node, inputName, strRes?.widget);
+    return strRes;
   };
 
   const origFloat = ComfyWidgets.FLOAT;
@@ -2633,7 +3224,36 @@ function patchWidgets() {
     if (node?.comfyClass === NODE_TYPE && inputName === "duration") {
       return { widget: createDurationWidget(node, inputName, inputData) };
     }
-    return origFloat.apply(this, arguments);
+    const fltRes = origFloat.apply(this, arguments);
+    relabelWidget(node, inputName, fltRes?.widget);
+    return fltRes;
+  };
+
+  const origCombo = ComfyWidgets.COMBO;
+  ComfyWidgets.COMBO = function (node, inputName, inputData, opts) {
+    if (node?.comfyClass === NODE_TYPE && inputName === "mode") {
+      return { widget: createModeWidget(node, inputName, inputData) };
+    }
+    const cmbRes = origCombo.apply(this, arguments);
+    relabelWidget(node, inputName, cmbRes?.widget);
+    return cmbRes;
+  };
+
+  const origBoolean = ComfyWidgets.BOOLEAN;
+  ComfyWidgets.BOOLEAN = function (node, inputName, inputData, opts) {
+    const res = origBoolean.apply(this, arguments);
+    relabelWidget(node, inputName, res?.widget);
+    if (node?.comfyClass === NODE_TYPE && inputName === "dialogue_convert") {
+      const w = res?.widget;
+      if (w) {
+        const prevCb = w.callback;
+        w.callback = (v) => {
+          try { prevCb?.(v); } catch (e) { console.error("[Zoey MiniMax H3] dialogue_convert callback:", e); }
+          node._zoeyDirector?.composePreview?.();
+        };
+      }
+    }
+    return res;
   };
 }
 
@@ -2643,6 +3263,8 @@ function attachPicker(node, widget) {
     if (!el) return false;
     const picker = new RefPicker(node, widget, el);
     if (widget.strip) picker.attachStrip(widget.strip);
+    // 用途下拉加载后需要重画预览条（隐藏的 ref_purposes 控件 setValue 时调用）
+    node._zoeyRefreshRefStrip = () => { try { picker.refreshPreview(); } catch (e) { console.error("[Zoey MiniMax H3] refreshRefStrip:", e); } };
 
     const refresh = () => {
       try { picker.refreshPreview(); } catch (e) { console.error("[Zoey MiniMax H3] refreshPreview:", e); }
@@ -2651,6 +3273,8 @@ function attachPicker(node, widget) {
         const text = serializePrompt(el);
         renderPrompt(el, text, node);
       } catch (e) { console.error("[Zoey MiniMax H3] rerenderPrompt:", e); }
+      // 提示词区高度跟随节点（加载后按当前节点尺寸同步一次）
+      try { node._zoeySyncPromptHeight?.(); } catch (e) { console.error("[Zoey MiniMax H3] syncPromptHeight:", e); }
     };
     // 注意：前端 onConfigure/onConnectionsChange 内部依赖 this === node，
     // 必须用 .call(node, ...) 保留 this，否则会因 this 丢失而崩溃（如读 this.has_errors）
@@ -2679,6 +3303,7 @@ function attachPicker(node, widget) {
 
     const prevOnRemoved = node.onRemoved;
     node.onRemoved = () => {
+      if (node._zoeySizePoller) { clearInterval(node._zoeySizePoller); node._zoeySizePoller = null; }
       document.removeEventListener("zoey:library-loaded", onLibLoaded);
       picker.hide();
       prevOnRemoved?.call(node);

@@ -60,7 +60,29 @@ pip install -r requirements.txt
 | **ZOEYTextEncodeQwenImageEditPlus** | Qwen image edit encoder with multi-reference images for Qwen2-VL |
 | **VR 360° Preview** | 360° equirectangular panorama VR viewer powered by Pannellum |
 | **System Monitor** | Live CPU/RAM/VRAM/GPU temperature & utilization dashboard via embedded HTTP server, with background VRAM auto-cleanup |
-| **MiniMax H3 Reference-to-Video (@)** | Wraps official MiniMaxH3ReferenceToVideo with Seedance 2.0-style @ reference tags (@P1/@V1/@A1) that auto-expand to native &lt;Picture N&gt;/&lt;Video N&gt;/&lt;Audio N&gt; |
+| **MiniMax H3 Reference-to-Video (@)** | Wraps official MiniMaxH3ReferenceToVideo with Seedance-style @ reference tags (@P1/@V1/@A1/@C1/@L1) auto-expanded to native tags, plus a storyboard director panel and a permanent global asset library |
+
+##### MiniMax H3 Usage
+
+Wraps the official `MiniMaxH3ReferenceToVideo` (text + image/video/audio references → video). Type `@` in the prompt to open a media picker with thumbnails; hover any `@` thumbnail for a large preview.
+
+**@ Reference tags** — auto-expand to native `<Picture N>/<Video N>/<Audio N>`:
+| Tag | Meaning |
+|-----|---------|
+| `@P1` | 1st connected reference image |
+| `@V1` | 1st connected reference video |
+| `@A1` | 1st connected reference audio |
+| `@C1` | storyboard character slot (director mode) |
+| `@L1` | global asset library entry |
+
+**🧰 Global Asset Library** (permanent, cross-workflow): the **素材库** widget on the node lets you upload local images (character/prop/scene) and audio files to disk (`input/zoey_library/`). Characters support an **appearance note** and an optional **voice audio**. Reference any saved entry with `@L1…`; the node auto-loads the file and injects it into generation (no LoadImage node needed), and auto-writes purpose annotations such as ``<Picture K> 是{name}的人物参考（锁定脸和服装）。外貌：…，音色参考 <Audio N>``.
+
+**🎬 Director panel** (故事板/分镜): enable `director_mode` to build multi-shot storyboards instead of a single prompt. Per shot:
+- Camera & shot-size preset buttons (push/pull/pan/truck/arc/POV/static/… + close-up/medium/wide/long/…)
+- Dialogue rows (speaker S1–S5 + language + original text) compiled to `(S1) says: <d>[lang] text</d>`; global speaker list for voice descriptions
+- Character slots `@C` (assign a reference image → auto ``<Picture K> 是{name}的人物参考（锁定脸和服装）`` declaration)
+- Transition presets, duration with one-click **auto-allocate by dialogue length**, timeline start timestamps, shot reorder/duplicate, shot templates (product ad / character story / transition rhythm / music MV)
+- Reference-purpose quick annotation, sound/music fields (`overall_soundscape` / `non_diegetic_music`), cross-shot consistency toggle, and a live compiled-prompt preview
 
 ### Highlights
 
@@ -68,7 +90,7 @@ pip install -r requirements.txt
 - **Translation**: Pure Translator (Helsinki-NLP / Baidu / Google) + Hunyuan Translator (20+ languages, auto model cache)
 - **Video Pipeline**: Batch load → process → save complete workflow
 - **Image Editor**: 15+ operations including flip, rotate, blur, edge detect, sharpen, blend, stylize
-- **MiniMax H3**: Seedance-style @ reference tags (@P1/@V1/@A1) auto-expand to native reference tags for image/video/audio
+- **MiniMax H3**: Seedance-style @ reference tags, permanent global asset library (local upload + auto-inject), and a full storyboard director panel
 - **System Monitor**: live CPU/GPU/VRAM dashboard with background VRAM auto-cleanup
 
 ### Dependencies
@@ -144,7 +166,29 @@ pip install -r requirements.txt
 | **ZOEYTextEncodeQwenImageEditPlus** | Qwen 图像编辑编码器，支持多张参考图 |
 | **VR 360° 预览** | 360° 全景图 VR 预览，基于 Pannellum 全屏查看器 |
 | **系统监控** | 实时监控 CPU/内存/显存/GPU 温度与利用率，内置 HTTP 看板，后台自动清理显存 |
-| **MiniMax H3 参考转视频 (@)** | 包装官方 MiniMaxH3ReferenceToVideo，支持 Seedance 2.0 风格 @P1/@V1/@A1 引用语法，自动展开为原生 &lt;Picture N&gt;/&lt;Video N&gt;/&lt;Audio N&gt; |
+| **MiniMax H3 参考转视频 (@)** | 包装官方 MiniMaxH3ReferenceToVideo，支持 Seedance 风格 @P1/@V1/@A1/@C1/@L1 引用语法自动展开为原生标签，附带导演台分镜面板与永久全局素材库 |
+
+##### MiniMax H3 使用方法
+
+包装官方 `MiniMaxH3ReferenceToVideo`（文字 + 图片/视频/音频参考 → 视频）。提示词里输入 `@` 弹出带缩略图的素材选择器；鼠标悬停任意 `@` 缩略图可看大图。
+
+**@ 引用标签** —— 自动展开为原生 `<Picture N>/<Video N>/<Audio N>`：
+| 标签 | 含义 |
+|------|------|
+| `@P1` | 第 1 张已连接的参考图 |
+| `@V1` | 第 1 段已连接的参考视频 |
+| `@A1` | 第 1 段已连接的参考音频 |
+| `@C1` | 导演台角色槽（导演模式） |
+| `@L1` | 全局素材库条目 |
+
+**🧰 永久全局素材库**（跨工作流）：节点上的「素材库」控件可本地上传图片（角色/道具/场景）与音频文件到磁盘（`input/zoey_library/`）。角色支持**外貌备注**与可选**语音音频**。提示词里用 `@L1…` 调用，节点自动加载文件并注入生成（无需再连 LoadImage 节点），并自动补用途标注，如 ``<Picture K> 是{name}的人物参考（锁定脸和服装）。外貌：…，音色参考 <Audio N>``。
+
+**🎬 导演台（分镜/故事板）**：开启 `director_mode` 用多镜头分镜替代单条提示词。每镜支持：
+- 景别/运镜快捷按钮（特写/近景/中景/全景/远景 + 推/拉/摇/横移/环绕/POV/静态…）
+- 对白行（说话人 S1–S5 + 语言 + 台词原文）自动拼成 `(S1) says: <d>[语言] 原文</d>`；全局说话人列表写音色描述
+- 角色槽 `@C`（分配参考图 → 自动生成 ``<Picture K> 是{name}的人物参考（锁定脸和服装）`` 声明）
+- 转场预设、时长 + 一键**按台词分配时长**、镜头起始时间轴、镜头复制/上下移、镜头模板（产品广告/角色剧情/转场节奏/音乐MV）
+- 参考用途快捷标注、音效/配乐字段（`overall_soundscape` / `non_diegetic_music`）、跨镜一致开关、实时编译预览
 
 ### 功能亮点
 
@@ -152,7 +196,7 @@ pip install -r requirements.txt
 - **翻译**：纯净翻译器(Helsinki-NLP/百度/谷歌) + 混元翻译器(20+语言、自动缓存)
 - **视频流水线**：批量加载→处理→保存完整工作流
 - **图像编辑器**：15+ 种操作（翻转、旋转、模糊、边缘检测、锐化、融合、风格化）
-- **MiniMax H3**：Seedance 风格 @ 引用标签（@P1/@V1/@A1），自动展开为原生图片/视频/音频引用标签
+- **MiniMax H3**：Seedance 风格 @ 引用标签、永久全局素材库（本地上传 + 自动注入）、完整的导演台分镜面板
 - **系统监控**：实时 CPU/GPU/显存看板，后台自动清理显存
 
 ### 依赖

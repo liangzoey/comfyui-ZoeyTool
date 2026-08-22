@@ -14,7 +14,7 @@ import re
 from .zoey_minimax_h3_tags import build_declaration, count_refs, expand_at_tags
 
 try:
-    from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
+    from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo, MiniMaxH3ImageToVideo
     _H3_AVAILABLE = True
 except Exception:
     _H3_AVAILABLE = False
@@ -92,6 +92,80 @@ def _frame_count(duration):
 _CAST_RE = re.compile(r"@(?:[Cc]|char)(\d+)")
 _LIB_RE = re.compile(r"@[Ll](\d+)")
 _LIB_SUBFOLDER = "zoey_library"
+
+# 成对引号（ASCII 双引号 / 弯双引号 / 「」 / 『』）内的内容视为台词
+_DIALOGUE_QUOTE_RE = re.compile(
+    '"([^"\n]*)"'
+    '|“([^”\n]*)”'
+    '|「([^」\n]*)」'
+    '|『([^』\n]*)』'
+)
+
+
+def _detect_lang(text):
+    """按文字系统粗识别语种，供 <d>[Lang] 使用。"""
+    if re.search(r"[぀-ヿ]", text):       # 平假名/片假名
+        return "Japanese"
+    if re.search(r"[가-힣]", text):       # 谚文音节
+        return "Korean"
+    if re.search(r"[一-鿿]", text):       # CJK 汉字
+        return "Chinese"
+    if re.search(r"[Ѐ-ӿ]", text):       # 西里尔字母
+        return "Russian"
+    if re.search(r"[฀-๿]", text):       # 泰文
+        return "Thai"
+    if re.search(r"[؀-ۿ]", text):       # 阿拉伯文
+        return "Arabic"
+    return "English"
+
+
+def _convert_quoted_dialogue(text):
+    """把成对引号内容自动转成 <d>[语种] 内容</d>，语种按内容识别。"""
+    if not text:
+        return text
+
+    def repl(match):
+        content = next((g for g in match.groups() if g), "").strip()
+        if not content:
+            return match.group(0)
+        return f"<d>[{_detect_lang(content)}] {content}</d>"
+
+    return _DIALOGUE_QUOTE_RE.sub(repl, text)
+
+
+# 参考图用途标注（官方手册：参考图必须标注用途，否则保主体不保背景）
+_REF_PURPOSE_LINES = {
+    "character": lambda k: f"<Picture {k}> 是人物参考（锁定脸和服装）",
+    "scene": lambda k: f"<Picture {k}> 是场景参考（背景完全一致）",
+    "style": lambda k: f"<Picture {k}> 是风格参考（匹配这种美术风格）",
+    "composition": lambda k: f"<Picture {k}> 是构图参考（匹配这个取景）",
+    "object": lambda k: f"<Picture {k}> 是物体参考（保持这件物品原样）",
+    "first_frame": lambda k: f"<Picture {k}> 是首帧参考",
+    "last_frame": lambda k: f"<Picture {k}> 是尾帧参考",
+    "motion": lambda k: f"<Picture {k}> 是动作参考（沿用它的动作）",
+}
+
+
+def _build_purpose_lines(ref_purposes, image_slots):
+    """按 ref_purposes JSON（{图片槽位: 用途key}）生成用途标注行。"""
+    try:
+        data = json.loads(ref_purposes or "{}")
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    lines = []
+    for slot, key in data.items():
+        try:
+            slot = int(slot)
+        except (TypeError, ValueError):
+            continue
+        if slot not in image_slots:
+            continue
+        tpl = _REF_PURPOSE_LINES.get(str(key))
+        if tpl:
+            lines.append(tpl(image_slots.index(slot) + 1))
+    return lines
 
 
 def _referenced_indexes(text):
@@ -270,7 +344,8 @@ def _expand_char_tags(text, char_pic):
     return _CAST_RE.sub(repl, text)
 
 
-def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of):
+def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of,
+                      dialogue_convert=True):
     """导演台：分镜拼成 CUT/TRANSITION + 对白 + 角色人物参考 + 音效/配乐 + 总时长。
 
     数据结构：
@@ -341,7 +416,10 @@ def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio
     for i, shot in enumerate(shots):
         if not isinstance(shot, dict) or not str(shot.get("prompt", "")).strip():
             raise ValueError(f"导演台：CUT {i + 1} 缺少提示词")
-        shot_text, a = _expand_library_tags(_expand_char_tags(str(shot.get("prompt", "")).strip(), char_pic),
+        shot_text = str(shot.get("prompt", "")).strip()
+        if dialogue_convert:
+            shot_text = _convert_quoted_dialogue(shot_text)
+        shot_text, a = _expand_library_tags(_expand_char_tags(shot_text, char_pic),
                                             library, pic_of, aud_of)
         lib_annos.extend(a)
         shot_text = expand_at_tags(shot_text, counts)
@@ -390,7 +468,9 @@ def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio
 class ZoeyMiniMaxH3ReferenceToVideo:
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {}
+        optional = {
+            "audio_vae": ("VAE",),
+        }
         for i in range(_IMAGE_SLOTS):
             optional[f"ref_image_{i}"] = ("IMAGE",)
         for i in range(_VIDEO_SLOTS):
@@ -402,10 +482,9 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             "required": {
                 "clip": ("CLIP",),
                 "vae": ("VAE",),
-                "audio_vae": ("VAE",),
                 "prompt": ("STRING", {
                     "multiline": True,
-                    "placeholder": "用 @P1/@V1/@A1 引用参考素材，如：@P1 的男人…",
+                    "placeholder": "参考模式用 @P1/@V1/@A1 引用素材；T2V 纯文本；I2V 用首张参考图作首帧；自动按连接选择",
                 }),
                 "resolution": (["自动", "608*352", "736*416", "864*480", "960*544", "1056*608",
                                 "1152*640", "1216*672", "1280*736", "1344*768", "1376*768",
@@ -439,6 +518,17 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "default": "",
                     "placeholder": "永久全局素材库（前端渲染，值不存工作流）",
                 }),
+                "mode": (["参考", "T2V", "I2V", "自动"], {"default": "参考"}),
+                "dialogue_convert": ("BOOLEAN", {
+                    "default": True,
+                    "label_on": "转换",
+                    "label_off": "关闭",
+                }),
+                "ref_purposes": ("STRING", {
+                    "multiline": True,
+                    "default": "{}",
+                    "placeholder": "参考图用途标注 JSON（前端渲染，如 {\"0\":\"scene\"}）",
+                }),
             },
             "optional": optional,
         }
@@ -448,8 +538,9 @@ class ZoeyMiniMaxH3ReferenceToVideo:
     FUNCTION = "process"
     CATEGORY = "Zoey Tool/MiniMax H3"
 
-    def process(self, clip, vae, audio_vae, prompt, resolution, aspect, duration,
-                ref_image_size, auto_declaration, director_mode, director_shots, library="", **refs):
+    def process(self, clip, vae, prompt, mode, resolution, aspect, duration,
+                ref_image_size, auto_declaration, director_mode, director_shots,
+                library="", audio_vae=None, dialogue_convert=True, ref_purposes="{}", **refs):
         ref_images = {}
         for i in range(_IMAGE_SLOTS):
             ref_images[f"ref_image_{i}"] = refs.get(f"ref_image_{i}")
@@ -471,15 +562,135 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             audio_count=sum(1 for i in range(_AUDIO_SLOTS) if refs.get(f"ref_audio_{i}") is not None),
         )
 
+        image_slots = sorted(i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
+        has_video = any(v is not None for v in ref_videos.values())
+        has_audio = any(a is not None for a in ref_audios.values()) \
+            or any(a is not None for a in ref_video_audios.values())
+
+        # 引号台词自动转 <d>[语种] 内容</d>（覆盖非导演台的原始 prompt）
+        if dialogue_convert:
+            prompt = _convert_quoted_dialogue(prompt or "")
+
+        # 自动模式：按连接情况选后端
+        eff = mode
+        if mode == "自动":
+            if has_video or has_audio:
+                eff = "参考"
+            elif len(image_slots) == 1:
+                eff = "I2V"
+            elif image_slots:
+                eff = "参考"
+            else:
+                eff = "T2V"
+
         width, height = _compute_canvas(ref_images, resolution, aspect)
 
+        if eff in ("T2V", "I2V"):
+            # I2V：第一张已连接参考图作首帧；≥2 张时最后一张作尾帧（首尾帧）
+            first_frame = ref_images[f"ref_image_{image_slots[0]}"] if (eff == "I2V" and image_slots) else None
+            last_frame = ref_images[f"ref_image_{image_slots[-1]}"] if (eff == "I2V" and len(image_slots) >= 2) else None
+            return self._run_text_image(clip, vae, prompt, width, height, duration,
+                                        director_mode, director_shots, eff == "I2V",
+                                        first_frame, dialogue_convert, last_frame)
+
+        return self._run_ref2va(clip, vae, audio_vae, prompt, ref_images, ref_videos,
+                                ref_video_audios, ref_audios, counts, width, height,
+                                duration, ref_image_size, auto_declaration, director_mode,
+                                director_shots, library, image_slots, dialogue_convert,
+                                ref_purposes)
+
+    def _compose_plain_director(self, shots_json, dialogue_convert=True):
+        """T2V/I2V 分镜组合：只拼 CUT/TRANSITION/对白/音效/配乐，不做 @ 引用展开。"""
+        try:
+            data = json.loads(shots_json or "{}")
+        except Exception:
+            data = {}
+        shots = []
+        speakers = {}
+        soundscape = ""
+        music = ""
+        consistent = True
+        if isinstance(data, dict):
+            shots = data.get("shots") or []
+            soundscape = str(data.get("soundscape", "")).strip()
+            music = str(data.get("music", "")).strip()
+            consistent = bool(data.get("consistent", True))
+            for sp in data.get("speakers") or []:
+                if isinstance(sp, dict) and str(sp.get("id", "")).strip():
+                    speakers[str(sp.get("id")).strip()] = str(sp.get("desc", "")).strip()
+        elif isinstance(data, list):
+            shots = data
+        if not isinstance(shots, list) or not shots:
+            raise ValueError("导演台：请至少添加一个镜头（点击「＋ 添加镜头」）")
+
+        parts = []
+        total = 0.0
+        for i, shot in enumerate(shots):
+            if not isinstance(shot, dict) or not str(shot.get("prompt", "")).strip():
+                raise ValueError(f"导演台：CUT {i + 1} 缺少提示词")
+            shot_text = str(shot.get("prompt", "")).strip()
+            if dialogue_convert:
+                shot_text = _convert_quoted_dialogue(shot_text)
+            if i > 0 and consistent:
+                shot_text += "\n保持与上一镜相同的角色、场景、服装与光线。"
+            for d in shot.get("dialogue") or []:
+                if not isinstance(d, dict):
+                    continue
+                text = str(d.get("text", "")).strip()
+                if not text:
+                    continue
+                spk = str(d.get("speaker", "")).strip() or "S1"
+                lang = str(d.get("lang", "")).strip() or "English"
+                desc = speakers.get(spk, "")
+                if desc:
+                    shot_text += f"\n{desc} ({spk}) says: <d>[{lang}] {text}.</d>"
+                else:
+                    shot_text += f"\n({spk}) says: <d>[{lang}] {text}.</d>"
+            if i == 0:
+                parts.append(f"CUT 1: {shot_text}")
+            else:
+                transition = str(shot.get("transition", "")).strip()
+                if transition:
+                    parts.append(f"TRANSITION: {transition}")
+                parts.append(f"CUT {i + 1}: {shot_text}")
+            try:
+                total += float(shot.get("duration", 5.0))
+            except Exception:
+                total += 5.0
+        if soundscape:
+            parts.append(f"overall_soundscape: {soundscape}")
+        if music:
+            parts.append(f"non_diegetic_music: {music}")
+        return "\n".join(parts), min(total, 15.0)
+
+    def _run_text_image(self, clip, vae, prompt, width, height, duration,
+                        director_mode, director_shots, use_first_frame, first_frame,
+                        dialogue_convert=True, last_frame=None):
+        """T2V / I2V：走官方 MiniMaxH3ImageToVideo，不做 @ 引用展开。"""
+        if director_mode:
+            prompt_text, total = self._compose_plain_director(director_shots, dialogue_convert)
+            length = _frame_count(total)
+        else:
+            prompt_text = (prompt or "").strip()
+            length = _frame_count(duration)
+        outputs = MiniMaxH3ImageToVideo.execute(
+            clip, vae, prompt_text, width, height, length,
+            first_frame=first_frame if use_first_frame else None,
+            last_frame=last_frame if use_first_frame else None,
+        )
+        return (outputs.args[0], outputs.args[1], prompt_text)
+
+    def _run_ref2va(self, clip, vae, audio_vae, prompt, ref_images, ref_videos,
+                    ref_video_audios, ref_audios, counts, width, height, duration,
+                    ref_image_size, auto_declaration, director_mode, director_shots,
+                    library, image_slots, dialogue_convert=True, ref_purposes="{}"):
         # 永久全局素材库：从磁盘读清单，仅对提示词里 @L 引用的条目注入媒体
         library = _load_global_library()
-        image_slots = sorted(i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
-        audio_slots = sorted(i for i in range(_AUDIO_SLOTS) if refs.get(f"ref_audio_{i}") is not None)
+        audio_slots = sorted(i for i in range(_AUDIO_SLOTS) if ref_audios.get(f"ref_audio_{i}") is not None)
         paired_audio = sum(
             1 for i in range(_VIDEO_SLOTS)
-            if refs.get(f"ref_video_{i}") is not None and refs.get(f"ref_video_audio_{i}") is not None)
+            if ref_videos.get(f"ref_video_{i}") is not None
+            and ref_video_audios.get(f"ref_video_audio_{i}") is not None)
 
         pic_of = aud_of = {}
         img_order = aud_order = []
@@ -488,7 +699,8 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             pic_of, aud_of, img_order, aud_order = _library_plan(
                 library, referenced, image_slots, paired_audio, audio_slots)
             composed, total_duration, has_user_decl = _compose_director(
-                director_shots, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of)
+                director_shots, counts, image_slots, audio_slots, paired_audio, library,
+                pic_of, aud_of, dialogue_convert)
             if not has_user_decl and auto_declaration:
                 declaration = build_declaration(counts)
                 if declaration:
@@ -510,8 +722,16 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                 prompt_text = "\n".join(decl) + "\n" + prompt_text
             length = _frame_count(duration)
 
+        # 参考图用途标注（简单模式/导演台共用）：按 ref_purposes 生成 <Picture K> 是…行
+        purpose_lines = _build_purpose_lines(ref_purposes, image_slots)
+        if purpose_lines:
+            prompt_text = "\n".join(purpose_lines) + "\n" + prompt_text
+
         if img_order or aud_order:
             _inject_library(ref_images, ref_audios, img_order, aud_order, library)
+
+        if audio_vae is None and (paired_audio or any(a is not None for a in ref_audios.values())):
+            raise ValueError("参考模式引用了音频素材，请连接 audio_vae 输入")
 
         outputs = MiniMaxH3ReferenceToVideo.execute(
             clip, vae, audio_vae, prompt_text, width, height, length,
