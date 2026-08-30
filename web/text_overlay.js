@@ -24,18 +24,6 @@ app.registerExtension({
                 }
             });
 
-            // ── State ──
-            const s = {
-                node, img: null, loaded: false, loadError: null, imgAspect: null,
-                text: getW("text")?.value ?? "Hello",
-                x: 0.5, y: 0.5, size: 48, rotation: 0, opacity: 1,
-                align: "center", color: "#ffffff",
-                fontPath: getW("font_path")?.value ?? "",
-                fontFamily: "",
-                mode: null, mx0: 0, my0: 0, pos0: null, lastInfo: null,
-            };
-            node._toState = s;
-
             // ── Font mapping: label → file path → CSS font-family ──
             const FONTS = [
                 { label: "自动检测",  path: "",       css: "'Microsoft YaHei',sans-serif" },
@@ -47,7 +35,7 @@ app.registerExtension({
                 { label: "思源黑体",  path: "C:/Windows/Fonts/SourceHanSansSC-Regular.otf", css: "'Source Han Sans SC',sans-serif" },
                 { label: "思源宋体",  path: "C:/Windows/Fonts/SourceHanSerifSC-Regular.otf", css: "'Source Han Serif SC',serif" },
                 { label: "Noto Sans SC",   path: "C:/Windows/Fonts/NotoSansSC-Regular.otf", css: "'Noto Sans SC',sans-serif" },
-                { label: "阿里巴巴普惠体", path: "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf", css: "'Alibaba PuHui Ti',sans-serif" },
+                { label: "阿里巴巴普惠体", path: "C:/Windows/Fonts/AlibabaPuHuiTi-Regular.ttf", css: "'Alibaba Pu Hui Ti',sans-serif" },
                 { label: "得意黑",         path: "C:/Windows/Fonts/SmileySans-Oblique.ttf",   css: "'Smiley Sans',sans-serif" },
                 { label: "霞鹜文楷",       path: "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",   css: "'LXGW WenKai',serif" },
                 { label: "站酷快乐体",     path: "C:/Windows/Fonts/ZCOOL_Kuaile.ttf",          css: "'ZCOOL Kuaile',sans-serif" },
@@ -70,8 +58,45 @@ app.registerExtension({
                 for (const f of FONTS) { if (f.path && f.path.includes(fn)) return f; }
                 return FONTS[0];
             }
-            // Initialize fontFamily from saved path
-            s.fontFamily = fontEntryByPath(s.fontPath).css;
+            function num(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
+
+            // ── State: list of text layers ──
+            let uid = 0;
+            function mkLayer(over) {
+                const l = {
+                    id: ++uid,
+                    text: "Hello", x: 0.5, y: 0.5, size: 48,
+                    rotation: 0, opacity: 1, align: "center", color: "#ffffff",
+                    fontPath: "", fontFamily: FONTS[0].css,
+                };
+                if (over) Object.assign(l, over);
+                if (!l.fontFamily) l.fontFamily = fontEntryByPath(l.fontPath).css;
+                return l;
+            }
+            function layerFromCfg(c, defFont) {
+                const fp = c.font ?? defFont ?? "";
+                const l = mkLayer({
+                    text: c.text ?? "Hello",
+                    x: num(c.x, 0.5), y: num(c.y, 0.5),
+                    size: num(c.size, 48),
+                    rotation: (num(c.r, 0) % 360 + 360) % 360,
+                    opacity: num(c.o, 1),
+                    color: c.color ?? "#ffffff",
+                    align: c.align ?? "center",
+                    fontPath: fp,
+                });
+                l.fontFamily = fontEntryByPath(fp).css;
+                return l;
+            }
+
+            const s = {
+                node, img: null, loaded: false, loadError: null, imgAspect: null,
+                layers: [], active: 0,
+                mode: null, mx0: 0, my0: 0, pos0: null, lastInfo: null,
+                _rotHandle: null, _resizeHandles: [], _resizeHalfDims: null,
+            };
+            node._toState = s;
+            function cur() { return s.layers[s.active]; }
 
             // ── DOM ──
             const root = document.createElement("div");
@@ -85,6 +110,24 @@ app.registerExtension({
             wrap.appendChild(cv);
             root.appendChild(wrap);
 
+            // ── Layer bar: select + add + delete ──
+            const layerBar = document.createElement("div");
+            layerBar.style.cssText = "display:flex;align-items:center;gap:6px;padding:0 0 4px;flex:none;";
+            const layerSel = document.createElement("select");
+            layerSel.style.cssText = "flex:1;min-width:0;font-size:11px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#ddd;height:22px;padding:0 4px;";
+            const addBtn = document.createElement("button");
+            addBtn.textContent = "＋";
+            addBtn.title = "添加一个文本层";
+            addBtn.style.cssText = "font-size:14px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#4fc3f7;cursor:pointer;height:22px;width:26px;padding:0 0 2px;line-height:1;flex:none;";
+            const delBtn = document.createElement("button");
+            delBtn.textContent = "－";
+            delBtn.title = "删除当前文本层";
+            delBtn.style.cssText = "font-size:14px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#ff6b6b;cursor:pointer;height:22px;width:26px;padding:0 0 2px;line-height:1;flex:none;";
+            layerBar.appendChild(layerSel);
+            layerBar.appendChild(addBtn);
+            layerBar.appendChild(delBtn);
+            root.appendChild(layerBar);
+
             // ── Controls ──
             const bar = document.createElement("div");
             bar.style.cssText = "display:flex;align-items:center;gap:6px;padding:2px 0;flex-wrap:wrap;";
@@ -92,7 +135,7 @@ app.registerExtension({
             // Text input
             const textInput = document.createElement("input");
             textInput.type = "text";
-            textInput.value = s.text;
+            textInput.value = "Hello";
             textInput.style.cssText = "flex:1;min-width:60px;padding:2px 4px;font-size:11px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#ddd;height:22px;";
             textInput.placeholder = "输入文字...";
 
@@ -103,27 +146,28 @@ app.registerExtension({
 
             const sizeSlider = document.createElement("input");
             sizeSlider.type = "range";
-            sizeSlider.min = 8; sizeSlider.max = 200; sizeSlider.value = s.size;
+            sizeSlider.min = 8; sizeSlider.max = 200; sizeSlider.value = 48;
             sizeSlider.style.cssText = "width:56px;height:14px;cursor:pointer;flex:none;";
 
             const sizeVal = document.createElement("span");
-            sizeVal.textContent = `${s.size}`;
+            sizeVal.textContent = `48`;
             sizeVal.style.cssText = "font-size:10px;font-family:monospace;color:#aaa;width:28px;text-align:right;flex:none;";
 
             // Color
             const swatch = document.createElement("div");
             swatch.style.cssText = "width:22px;height:22px;border-radius:4px;border:2px solid #555;cursor:pointer;flex-shrink:0;";
-            swatch.style.backgroundColor = s.color;
+            swatch.style.backgroundColor = "#ffffff";
 
             const ci = document.createElement("input");
             ci.type = "color";
-            ci.value = s.color;
+            ci.value = "#ffffff";
             ci.style.cssText = "width:0;height:0;padding:0;border:none;position:absolute;opacity:0;pointer-events:none;";
 
             swatch.addEventListener("click", () => ci.click());
             ci.addEventListener("input", () => {
-                s.color = ci.value;
-                swatch.style.backgroundColor = s.color;
+                const l = cur(); if (!l) return;
+                l.color = ci.value;
+                swatch.style.backgroundColor = l.color;
                 syncW(); draw();
             });
 
@@ -134,11 +178,11 @@ app.registerExtension({
 
             const opSlider = document.createElement("input");
             opSlider.type = "range";
-            opSlider.min = 0; opSlider.max = 100; opSlider.value = Math.round(s.opacity * 100);
+            opSlider.min = 0; opSlider.max = 100; opSlider.value = 100;
             opSlider.style.cssText = "width:40px;height:14px;cursor:pointer;flex:none;";
 
             const opVal = document.createElement("span");
-            opVal.textContent = `${Math.round(s.opacity * 100)}%`;
+            opVal.textContent = `100%`;
             opVal.style.cssText = "font-size:9px;font-family:monospace;color:#888;width:26px;text-align:right;flex:none;";
 
             // Rotation label
@@ -147,7 +191,7 @@ app.registerExtension({
             rotLbl.style.cssText = "font-size:9px;color:#888;flex:none;";
 
             const rotVal = document.createElement("span");
-            rotVal.textContent = `${Math.round(s.rotation)}°`;
+            rotVal.textContent = `0°`;
             rotVal.style.cssText = "font-size:9px;font-family:monospace;color:#888;width:24px;text-align:right;flex:none;";
 
             // ── Font dropdown ──
@@ -189,33 +233,84 @@ app.registerExtension({
             bar.appendChild(refreshBtn);
             root.appendChild(bar);
 
-            // ── Events ──
+            // ── Layer helpers (UI) ──
+            function rebuildLayerSel() {
+                layerSel.innerHTML = "";
+                s.layers.forEach((l, i) => {
+                    const opt = document.createElement("option");
+                    const label = (l.text || "").trim() ? l.text.trim().slice(0, 12) : `层${i + 1}`;
+                    opt.value = i;
+                    opt.textContent = `${i + 1}. ${label}`;
+                    layerSel.appendChild(opt);
+                });
+                layerSel.selectedIndex = s.active;
+            }
+
+            function syncLayerControls() {
+                const l = cur(); if (!l) return;
+                textInput.value = l.text;
+                const entry = fontEntryByPath(l.fontPath);
+                fontSelect.selectedIndex = FONTS.indexOf(entry);
+                sizeSlider.value = l.size;
+                sizeVal.textContent = `${l.size}`;
+                opSlider.value = Math.round(l.opacity * 100);
+                opVal.textContent = `${Math.round(l.opacity * 100)}%`;
+                rotVal.textContent = `${Math.round(l.rotation)}°`;
+                swatch.style.backgroundColor = l.color;
+                ci.value = l.color;
+            }
+
+            // ── Layer bar events ──
+            layerSel.addEventListener("change", () => {
+                const i = parseInt(layerSel.value);
+                if (Number.isFinite(i)) { s.active = Math.max(0, Math.min(s.layers.length - 1, i)); }
+                syncLayerControls(); draw();
+            });
+
+            addBtn.addEventListener("click", () => {
+                const l = mkLayer({ text: "文字", fontPath: cur()?.fontPath ?? "" });
+                s.layers.push(l);
+                s.active = s.layers.length - 1;
+                rebuildLayerSel(); syncLayerControls(); draw(); syncW();
+            });
+
+            delBtn.addEventListener("click", () => {
+                if (s.layers.length <= 1) return;
+                s.layers.splice(s.active, 1);
+                s.active = Math.max(0, s.active - 1);
+                rebuildLayerSel(); syncLayerControls(); draw(); syncW();
+            });
+
+            // ── Control events ──
             textInput.addEventListener("input", () => {
-                s.text = textInput.value || " ";
+                const l = cur(); if (!l) return;
+                l.text = textInput.value || " ";
                 const tw = getW("text");
-                if (tw) { tw.value = s.text; if (tw.callback) tw.callback(s.text); }
+                if (tw) { tw.value = l.text; if (tw.callback) tw.callback(l.text); }
+                rebuildLayerSel();
                 draw();
             });
 
             fontSelect.addEventListener("change", async () => {
+                const l = cur(); if (!l) return;
                 const entry = FONTS[parseInt(fontSelect.value)];
-                s.fontPath = entry.path;
-                s.fontFamily = entry.css;
-                const fw = getW("font_path");
-                if (fw) { fw.value = s.fontPath; if (fw.callback) fw.callback(s.fontPath); }
+                l.fontPath = entry.path;
+                l.fontFamily = entry.css;
                 // 确保浏览器加载了该字体，获得正确的度量
                 try { await document.fonts.load(`1px ${entry.css}`); } catch (e) {}
                 draw();
             });
 
             sizeSlider.addEventListener("input", () => {
-                s.size = parseInt(sizeSlider.value);
-                sizeVal.textContent = `${s.size}`;
+                const l = cur(); if (!l) return;
+                l.size = parseInt(sizeSlider.value);
+                sizeVal.textContent = `${l.size}`;
                 syncW(); draw();
             });
 
             opSlider.addEventListener("input", () => {
-                s.opacity = opSlider.value / 100;
+                const l = cur(); if (!l) return;
+                l.opacity = opSlider.value / 100;
                 opVal.textContent = `${opSlider.value}%`;
                 syncW(); draw();
             });
@@ -224,7 +319,6 @@ app.registerExtension({
             function vp() {
                 return { vl: 0, vt: 0, vr: 1, vb: 1, vw: 1, vh: 1 };
             }
-
             function n2c(nx, ny, info) {
                 return { x: info.ox + (nx - info.vl) * info.scX, y: info.oy + (ny - info.vt) * info.scY };
             }
@@ -232,7 +326,15 @@ app.registerExtension({
                 return { nx: (cx - info.ox) / info.scX + info.vl, ny: (cy - info.oy) / info.scY + info.vt };
             }
 
-            function cssFont(px) { return `${px}px ${s.fontFamily || 'sans-serif'}`; }
+            // Measure a layer's text half-dims at current image scale (in canvas px)
+            function measureLayer(l, info) {
+                const it = n2c(0, 0, info), ib = n2c(1, 1, info);
+                const ts = Math.max(8, l.size * (ib.x - it.x) / s.img.naturalWidth);
+                const ctx = cv.getContext("2d");
+                ctx.font = `${ts}px ${l.fontFamily || 'sans-serif'}`;
+                const tw = ctx.measureText(l.text).width;
+                return { ts, tw, th: ts * 1.2 };
+            }
 
             function draw() {
                 const rect = wrap.getBoundingClientRect();
@@ -290,96 +392,89 @@ app.registerExtension({
                 const ib = n2c(1, 1, info);
                 ctx.drawImage(s.img, it.x, it.y, ib.x - it.x, ib.y - it.y);
 
-                // Text overlay
-                const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
-                ctx.font = cssFont(ts);
-                const tm = ctx.measureText(s.text);
-                const tw = tm.width;
-                const th = ts * 1.2;
-
-                const tc = n2c(s.x, s.y, info);
-                const tx = tc.x - tw / 2;
-                const ty = tc.y - th / 2;
-
-                ctx.save();
-                ctx.translate(tc.x, tc.y);
-                ctx.rotate(s.rotation * Math.PI / 180);
-
-                // Text shadow
-                ctx.font = cssFont(ts);
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.shadowColor = "rgba(0,0,0,0.7)";
-                ctx.shadowBlur = 4;
-                ctx.fillStyle = s.color;
-                ctx.globalAlpha = s.opacity;
-                ctx.fillText(s.text, 0, 0);
-                ctx.shadowBlur = 0;
-                ctx.globalAlpha = 1;
-
-                // Bounding box (selected state indicator)
-                ctx.strokeStyle = "rgba(79,195,247,0.5)";
-                ctx.lineWidth = 1.5;
-                ctx.setLineDash([4, 3]);
-                ctx.strokeRect(-tw / 2 - 4, -th / 2 - 2, tw + 8, th + 4);
-                ctx.setLineDash([]);
-
-                // Rotation handle
-                const handleY = -th / 2 - 22;
-                ctx.beginPath();
-                ctx.moveTo(0, -th / 2 - 4);
-                ctx.lineTo(0, handleY);
-                ctx.strokeStyle = "rgba(255,255,255,0.6)";
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
-
-                ctx.fillStyle = "#4fc3f7";
-                ctx.beginPath();
-                ctx.arc(0, handleY, 5, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = "#fff";
-                ctx.lineWidth = 1;
-                ctx.stroke();
-
-                s._rotHandle = {
-                    x: tc.x, y: tc.y - (th / 2 + 22) * (s.rotation ? 1 : 1),
-                    angle: s.rotation,
-                };
-                // Better: compute rotated handle world position
-                const rad = s.rotation * Math.PI / 180;
-                const cosR = Math.cos(rad), sinR = Math.sin(rad);
-                const handleLocalX = 0;
-                const handleLocalY = -th / 2 - 22;
-                const handleWX = tc.x + handleLocalX * cosR - handleLocalY * sinR;
-                const handleWY = tc.y + handleLocalX * sinR + handleLocalY * cosR;
-                s._rotHandle = { x: handleWX, y: handleWY };
-
-                ctx.restore();
-
-                // Corner resize handles (bottom-right corner)
-                const hs = 8;
-                const corners = [
-                    { dx: -tw/2 - 4, dy: -th/2 - 2, id: "tl" },
-                    { dx: tw/2 + 4, dy: -th/2 - 2, id: "tr" },
-                    { dx: tw/2 + 4, dy: th/2 + 2, id: "br" },
-                    { dx: -tw/2 - 4, dy: th/2 + 2, id: "bl" },
-                ];
+                // Text overlays
+                s._rotHandle = null;
                 s._resizeHandles = [];
-                corners.forEach(c => {
-                    const wx = tc.x + c.dx * cosR - c.dy * sinR;
-                    const wy = tc.y + c.dx * sinR + c.dy * cosR;
-                    s._resizeHandles.push({ x: wx, y: wy, id: c.id });
+                s.layers.forEach((l, idx) => {
+                    if (!l.text) return;
+                    const { ts, tw, th } = measureLayer(l, info);
+                    const tc = n2c(l.x, l.y, info);
+                    const rad = l.rotation * Math.PI / 180;
+
                     ctx.save();
-                    ctx.translate(wx, wy);
-                    ctx.rotate(s.rotation * Math.PI / 180); // keep handles axis-aligned in text space
-                    ctx.fillStyle = c.id === "br" ? "#4fc3f7" : "rgba(255,255,255,0.6)";
-                    ctx.strokeStyle = "#222";
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.rect(-hs/2, -hs/2, hs, hs);
-                    ctx.fill();
-                    ctx.stroke();
+                    ctx.translate(tc.x, tc.y);
+                    ctx.rotate(rad);
+                    ctx.font = `${ts}px ${l.fontFamily || 'sans-serif'}`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.shadowColor = "rgba(0,0,0,0.7)";
+                    ctx.shadowBlur = 4;
+                    ctx.fillStyle = l.color;
+                    ctx.globalAlpha = l.opacity;
+                    ctx.fillText(l.text, 0, 0);
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
+
+                    if (idx === s.active) {
+                        // Bounding box
+                        ctx.strokeStyle = "rgba(79,195,247,0.5)";
+                        ctx.lineWidth = 1.5;
+                        ctx.setLineDash([4, 3]);
+                        ctx.strokeRect(-tw / 2 - 4, -th / 2 - 2, tw + 8, th + 4);
+                        ctx.setLineDash([]);
+
+                        // Rotation handle
+                        const handleY = -th / 2 - 22;
+                        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(0, -th / 2 - 4);
+                        ctx.lineTo(0, handleY);
+                        ctx.stroke();
+                        ctx.fillStyle = "#4fc3f7";
+                        ctx.beginPath();
+                        ctx.arc(0, handleY, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = "#fff";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
                     ctx.restore();
+
+                    if (idx === s.active) {
+                        const cosR = Math.cos(rad), sinR = Math.sin(rad);
+                        // Rotation handle world pos
+                        const handleLocalY = -th / 2 - 22;
+                        const handleWX = tc.x + 0 * cosR - handleLocalY * sinR;
+                        const handleWY = tc.y + 0 * sinR + handleLocalY * cosR;
+                        s._rotHandle = { x: handleWX, y: handleWY };
+
+                        // Corner resize handles (world-space)
+                        const hs = 8;
+                        const corners = [
+                            { dx: -tw / 2 - 4, dy: -th / 2 - 2, id: "tl" },
+                            { dx: tw / 2 + 4, dy: -th / 2 - 2, id: "tr" },
+                            { dx: tw / 2 + 4, dy: th / 2 + 2, id: "br" },
+                            { dx: -tw / 2 - 4, dy: th / 2 + 2, id: "bl" },
+                        ];
+                        s._resizeHandles = [];
+                        corners.forEach(c => {
+                            const wx = tc.x + c.dx * cosR - c.dy * sinR;
+                            const wy = tc.y + c.dx * sinR + c.dy * cosR;
+                            s._resizeHandles.push({ x: wx, y: wy, id: c.id });
+                            ctx.save();
+                            ctx.translate(wx, wy);
+                            ctx.rotate(rad);
+                            ctx.fillStyle = c.id === "br" ? "#4fc3f7" : "rgba(255,255,255,0.6)";
+                            ctx.strokeStyle = "#222";
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.rect(-hs / 2, -hs / 2, hs, hs);
+                            ctx.fill();
+                            ctx.stroke();
+                            ctx.restore();
+                        });
+                    }
                 });
 
                 // Info
@@ -389,53 +484,55 @@ app.registerExtension({
                 ctx.fillText(`${s.img.naturalWidth}×${s.img.naturalHeight}`, 6, 4);
 
                 // Rotation angle badge
-                if (s.rotation !== 0) {
+                if (s.layers.some(l => l.rotation !== 0)) {
                     ctx.fillStyle = "rgba(255,255,255,0.5)";
                     ctx.font = "9px monospace";
                     ctx.textAlign = "right"; ctx.textBaseline = "bottom";
-                    ctx.fillText(`${Math.round(s.rotation)}°`, cw - 4, ch - 4);
+                    ctx.fillText(`${Math.round(cur()?.rotation ?? 0)}°`, cw - 4, ch - 4);
                 }
             }
 
             // ── Widget sync ──
             function syncW() {
-                const cfg = {
-                    x: s.x, y: s.y, size: s.size,
-                    r: s.rotation, o: s.opacity,
-                    color: s.color, align: s.align,
-                };
+                const arr = s.layers.map(l => ({
+                    x: l.x, y: l.y, size: l.size, r: l.rotation, o: l.opacity,
+                    color: l.color, align: l.align, text: l.text, font: l.fontPath,
+                }));
                 const w = getW("text_config");
                 if (w) {
-                    w.value = JSON.stringify(cfg);
+                    w.value = JSON.stringify(arr);
                     if (w.callback) w.callback(w.value);
                 }
                 app.graph.setDirtyCanvas(true, true);
             }
 
             // ── Hit testing ──
-            function hitText(mx, my) {
-                if (!s.lastInfo) return false;
-                const ts = Math.max(8, s.size * (n2c(1, 1, s.lastInfo).x - n2c(0, 0, s.lastInfo).x) / s.img.naturalWidth);
-                const ctx = cv.getContext("2d");
-                ctx.font = cssFont(ts);
-                const tm = ctx.measureText(s.text);
-                const tw = tm.width, th = ts * 1.2;
-                const tc = n2c(s.x, s.y, s.lastInfo);
-                const rad = s.rotation * Math.PI / 180;
+            function hitLayer(l, mx, my, info) {
+                if (!s.img) return false;
+                const { tw, th } = measureLayer(l, info);
+                const tc = n2c(l.x, l.y, info);
+                const rad = l.rotation * Math.PI / 180;
                 const dx = mx - tc.x;
                 const dy = my - tc.y;
-                const lx = dx * Math.cos(-rad) - dy * Math.sin(-rad);
-                const ly = dx * Math.sin(-rad) + dy * Math.cos(-rad);
+                const ca = Math.cos(-rad), sa = Math.sin(-rad);
+                const lx = dx * ca - dy * sa;
+                const ly = dx * sa + dy * ca;
                 return Math.abs(lx) <= tw / 2 + 6 && Math.abs(ly) <= th / 2 + 4;
             }
-
+            function layerAt(mx, my) {
+                if (!s.lastInfo) return -1;
+                for (let i = s.layers.length - 1; i >= 0; i--) {
+                    if (!s.layers[i].text) continue;
+                    if (hitLayer(s.layers[i], mx, my, s.lastInfo)) return i;
+                }
+                return -1;
+            }
             function hitRotHandle(mx, my) {
                 if (!s._rotHandle) return false;
                 const dx = mx - s._rotHandle.x;
                 const dy = my - s._rotHandle.y;
                 return Math.sqrt(dx * dx + dy * dy) < 12;
             }
-
             function hitResizeHandle(mx, my) {
                 if (!s._resizeHandles) return -1;
                 for (let i = 0; i < s._resizeHandles.length; i++) {
@@ -445,17 +542,10 @@ app.registerExtension({
                 }
                 return -1;
             }
-
-            // Get text bounding box half-dimensions in canvas pixels (at current state)
-            function getTextHalfDims() {
+            function getHalfDims(l) {
                 if (!s.lastInfo || !s.img) return { hw: 1, hh: 1 };
-                const it = n2c(0, 0, s.lastInfo);
-                const ib = n2c(1, 1, s.lastInfo);
-                const ts = Math.max(8, s.size * (ib.x - it.x) / s.img.naturalWidth);
-                const ctx = cv.getContext("2d");
-                ctx.font = cssFont(ts);
-                const tm = ctx.measureText(s.text);
-                return { hw: tm.width / 2 + 4, hh: ts * 1.2 / 2 + 2 };
+                const { tw, th } = measureLayer(l, s.lastInfo);
+                return { hw: tw / 2 + 4, hh: th / 2 + 2 };
             }
 
             // ── Interaction ──
@@ -465,28 +555,32 @@ app.registerExtension({
 
                 const rIdx = hitResizeHandle(mx, my);
                 if (rIdx >= 0) {
+                    const l = cur(); if (!l) return;
                     s.mode = "resize";
                     s.resizeCorner = s._resizeHandles[rIdx].id;
                     s.mx0 = mx; s.my0 = my;
-                    s.pos0 = { size: s.size, x: s.x, y: s.y, rotation: s.rotation };
-                    const hd = getTextHalfDims();
-                    s._resizeHalfDims = hd;
+                    s.pos0 = { size: l.size, x: l.x, y: l.y, rotation: l.rotation };
+                    s._resizeHalfDims = getHalfDims(l);
                     e.preventDefault();
                     return;
                 }
 
                 if (hitRotHandle(mx, my)) {
+                    const l = cur(); if (!l) return;
                     s.mode = "rotate";
                     s.mx0 = mx; s.my0 = my;
-                    s.pos0 = { rotation: s.rotation, x: s.x, y: s.y };
+                    s.pos0 = { rotation: l.rotation, x: l.x, y: l.y };
                     e.preventDefault();
                     return;
                 }
 
-                if (hitText(mx, my)) {
+                const li = layerAt(mx, my);
+                if (li >= 0) {
+                    if (li !== s.active) { s.active = li; rebuildLayerSel(); syncLayerControls(); draw(); }
+                    const l = cur(); if (!l) return;
                     s.mode = "move";
                     s.mx0 = mx; s.my0 = my;
-                    s.pos0 = { x: s.x, y: s.y };
+                    s.pos0 = { x: l.x, y: l.y };
                     cv.style.cursor = "grabbing";
                     e.preventDefault();
                 }
@@ -498,42 +592,45 @@ app.registerExtension({
 
                 if (!s.mode) {
                     const onRS = hitResizeHandle(mx, my) >= 0;
-                    cv.style.cursor = onRS ? "nwse-resize" : hitText(mx, my) ? "grab" : hitRotHandle(mx, my) ? "crosshair" : "default";
+                    cv.style.cursor = onRS ? "nwse-resize" : hitRotHandle(mx, my) ? "crosshair" : layerAt(mx, my) >= 0 ? "grab" : "default";
                     return;
                 }
                 if (!s.lastInfo) return;
 
                 if (s.mode === "rotate") {
+                    const l = cur(); if (!l) return;
                     const tc = n2c(s.pos0.x, s.pos0.y, s.lastInfo);
                     const curAngle = Math.atan2(my - tc.y, mx - tc.x);
                     const startAngle = Math.atan2(s.my0 - tc.y, s.mx0 - tc.x);
                     let deltaDeg = (curAngle - startAngle) * 180 / Math.PI;
                     if (e.shiftKey) {
                         const raw = (s.pos0?.rotation ?? 0) + deltaDeg;
-                        s.rotation = ((Math.round(raw / 15) * 15) % 360 + 360) % 360;
+                        l.rotation = ((Math.round(raw / 15) * 15) % 360 + 360) % 360;
                     } else {
-                        s.rotation = (((s.pos0?.rotation ?? 0) + deltaDeg) % 360 + 360) % 360;
+                        l.rotation = (((s.pos0?.rotation ?? 0) + deltaDeg) % 360 + 360) % 360;
                     }
-                    rotVal.textContent = `${Math.round(s.rotation)}°`;
+                    rotVal.textContent = `${Math.round(l.rotation)}°`;
                     syncW(); draw(); e.preventDefault();
                     return;
                 }
 
                 if (s.mode === "move") {
+                    const l = cur(); if (!l) return;
                     const p = c2n(mx, my, s.lastInfo);
                     const p0 = c2n(s.mx0, s.my0, s.lastInfo);
-                    s.x = (s.pos0?.x ?? 0.5) + p.nx - p0.nx;
-                    s.y = (s.pos0?.y ?? 0.5) + p.ny - p0.ny;
-                    s.x = Math.max(0.05, Math.min(0.95, s.x));
-                    s.y = Math.max(0.05, Math.min(0.95, s.y));
+                    l.x = (s.pos0?.x ?? 0.5) + p.nx - p0.nx;
+                    l.y = (s.pos0?.y ?? 0.5) + p.ny - p0.ny;
+                    l.x = Math.max(0.05, Math.min(0.95, l.x));
+                    l.y = Math.max(0.05, Math.min(0.95, l.y));
                     syncW(); draw(); e.preventDefault();
                 }
 
                 if (s.mode === "resize") {
+                    const l = cur(); if (!l) return;
                     if (!s.lastInfo || !s.img) return;
                     try {
                         const tc = n2c(s.pos0.x, s.pos0.y, s.lastInfo);
-                        const rad = (s.pos0.rotation ?? s.rotation) * Math.PI / 180;
+                        const rad = (s.pos0.rotation ?? l.rotation) * Math.PI / 180;
                         const cosR = Math.cos(rad), sinR = Math.sin(rad);
                         const dx = mx - tc.x;
                         const dy = my - tc.y;
@@ -541,18 +638,17 @@ app.registerExtension({
                         const ly = -dx * sinR + dy * cosR;
                         const hw = s._resizeHalfDims?.hw ?? 1;
                         const hh = s._resizeHalfDims?.hh ?? 1;
-                        // 使用中心到鼠标的距离比例缩放（比轴平均更稳定）
                         const dist = Math.sqrt(lx * lx + ly * ly);
                         const origDist = Math.sqrt(hw * hw + hh * hh);
                         const scale = Math.max(0.15, Math.min(20, dist / origDist));
                         const newSize = Math.round(Math.max(8, Math.min(500, s.pos0.size * scale)));
-                        if (newSize !== s.size) {
-                            s.size = newSize;
-                            sizeSlider.value = s.size;
-                            sizeVal.textContent = `${s.size}`;
+                        if (newSize !== l.size) {
+                            l.size = newSize;
+                            sizeSlider.value = l.size;
+                            sizeVal.textContent = `${l.size}`;
                             syncW(); draw();
                         }
-                    } catch (e) { console.warn("resize error", e); }
+                    } catch (e2) { console.warn("resize error", e2); }
                     e.preventDefault();
                 }
             };
@@ -564,7 +660,6 @@ app.registerExtension({
                     syncW();
                 }
             };
-            // 鼠标离开窗口也释放模式，防止卡住
             const onMMLeave = () => { if (s.mode) { s.mode = null; cv.style.cursor = "default"; } };
             window.addEventListener("mousemove", onMM);
             window.addEventListener("mouseup", onMU);
@@ -673,36 +768,35 @@ app.registerExtension({
                 at();
             }
 
+            // ── Initialize layers from current widget values ──
+            function initLayers() {
+                const defFont = getW("font_path")?.value ?? "";
+                let cfg = null;
+                try { cfg = JSON.parse(getW("text_config")?.value || "{}"); } catch (e) {}
+                const txt = getW("text")?.value ?? "Hello";
+                let layers;
+                if (Array.isArray(cfg)) {
+                    layers = cfg.map(c => layerFromCfg(c && typeof c === "object" ? c : {}, c?.font ?? defFont));
+                } else {
+                    const c = (cfg && typeof cfg === "object") ? cfg : {};
+                    layers = [layerFromCfg({ ...c, text: c.text ?? txt }, defFont)];
+                }
+                if (!layers.length) layers = [mkLayer({ text: txt, fontPath: defFont })];
+                s.layers = layers;
+                s.active = 0;
+                rebuildLayerSel();
+                syncLayerControls();
+                draw();
+            }
+            initLayers();
+
             // ── Configure (workflow restore) ──
             const origCfg = this.configure;
             this.configure = function (data) {
                 if (origCfg) origCfg.apply(this, arguments);
                 const st = this._toState;
                 if (!st) return;
-                st.text = getW("text")?.value ?? "Hello";
-                textInput.value = st.text;
-                try {
-                    const raw = getW("text_config")?.value || "{}";
-                    const cfg = JSON.parse(raw);
-                    st.x = cfg.x ?? 0.5;
-                    st.y = cfg.y ?? 0.5;
-                    st.size = cfg.size ?? 48;
-                    st.rotation = (cfg.r ?? 0) % 360;
-                    st.opacity = cfg.o ?? 1;
-                    st.color = cfg.color ?? "#ffffff";
-                    st.align = cfg.align ?? "center";
-                } catch (e) {}
-                sizeSlider.value = st.size;
-                sizeVal.textContent = `${st.size}`;
-                opSlider.value = Math.round(st.opacity * 100);
-                opVal.textContent = `${Math.round(st.opacity * 100)}%`;
-                rotVal.textContent = `${Math.round(st.rotation)}°`;
-                swatch.style.backgroundColor = st.color;
-                ci.value = st.color;
-                st.fontPath = getW("font_path")?.value ?? "";
-                const entry = fontEntryByPath(st.fontPath);
-                st.fontFamily = entry.css;
-                fontSelect.selectedIndex = FONTS.indexOf(entry);
+                initLayers();
                 setTimeout(() => { retryLoad(20, 300); }, 500);
             };
 
@@ -723,9 +817,9 @@ app.registerExtension({
                 const w = Math.max(width || 350, 280);
                 const h = Math.max(180, Math.floor(w * 0.72));
                 wrap.style.height = h + "px";
-                return [w, h + 38];
+                return [w, h + 44];
             };
-            this.setSize([350, 260]);
+            this.setSize([350, 264]);
 
             // ── ResizeObserver ──
             let rt;
@@ -747,7 +841,7 @@ app.registerExtension({
                 if (origRM) origRM.apply(this, arguments);
             };
 
-            this.setSize([350, 260]);
+            this.setSize([350, 264]);
             setTimeout(() => retryLoad(12, 400), 300);
             return rv;
         };

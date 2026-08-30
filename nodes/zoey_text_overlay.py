@@ -115,69 +115,80 @@ class ZoeyTextOverlay:
 
     def render(self, image, text, text_config="{}", font_path=""):
         try:
-            cfg = json.loads(text_config)
+            data = json.loads(text_config)
         except Exception:
-            cfg = {}
+            data = {}
+
+        # 兼容：旧格式为单对象 dict，新格式为数组（多文本）；统一为列表
+        if isinstance(data, list):
+            items = [it for it in data if isinstance(it, dict)]
+        elif isinstance(data, dict):
+            items = [dict(data)]
+        else:
+            items = []
+        if not items:
+            items = [{}]
+        # 每个条目缺文本时，用 text 参数补齐（旧格式）
+        for it in items:
+            if not str(it.get("text", "")):
+                it["text"] = text
 
         B, H, W, C = image.shape
         results = []
 
-        fp = _find_font(font_path)
         for b in range(B):
             img_np = (image[b].cpu().numpy() * 255).astype(np.uint8)
             pil = Image.fromarray(img_np).convert("RGBA")
 
             overlay = Image.new("RGBA", pil.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
 
-            size = int(cfg.get("size", 48))
-            ox = float(cfg.get("x", 0.5))
-            oy = float(cfg.get("y", 0.5))
-            rot = -float(cfg.get("r", 0))  # 取反：Canvas顺时针→PIL逆时针
-            opacity = max(0, min(1, float(cfg.get("o", 1))))
-            align = cfg.get("align", "center")
-            hex_color = cfg.get("color", "#ffffff")
+            for it in items:
+                txt = str(it.get("text", ""))
+                if txt == "":
+                    continue
 
-            try:
-                hex_c = hex_color.lstrip("#")
-                if len(hex_c) == 3:
-                    hex_c = "".join(c * 2 for c in hex_c)
-                fr = int(hex_c[0:2], 16)
-                fg = int(hex_c[2:4], 16)
-                fb = int(hex_c[4:6], 16)
-            except Exception:
-                fr, fg, fb = 255, 255, 255
+                size = int(it.get("size", 48))
+                ox = float(it.get("x", 0.5))
+                oy = float(it.get("y", 0.5))
+                rot = -float(it.get("r", 0))  # 取反：Canvas顺时针→PIL逆时针
+                opacity = max(0, min(1, float(it.get("o", 1))))
+                hex_color = it.get("color", "#ffffff")
 
-            fa = int(opacity * 255)
-            fill_color = (fr, fg, fb, 255)  # 文字用完全不透明绘制，透明度通过 alpha 通道控制
+                try:
+                    hex_c = hex_color.lstrip("#")
+                    if len(hex_c) == 3:
+                        hex_c = "".join(c * 2 for c in hex_c)
+                    fr = int(hex_c[0:2], 16)
+                    fg = int(hex_c[2:4], 16)
+                    fb = int(hex_c[4:6], 16)
+                except Exception:
+                    fr, fg, fb = 255, 255, 255
 
-            try:
-                font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default()
-            except Exception:
-                font = ImageFont.load_default()
+                # 每个文本独立透明度：直接写入填充 alpha
+                fa = int(opacity * 255)
+                fill_color = (fr, fg, fb, fa)
 
-            # ── 文字渲染 ──
-            target_x = ox * W
-            target_y = oy * H
+                # 每个文本可用自己的 font；缺省回落到全局 font_path
+                fp = _find_font(it.get("font", font_path))
+                try:
+                    font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default()
+                except Exception:
+                    font = ImageFont.load_default()
 
-            # 直接在 overlay 上用 anchor="mm" 绘制（匹配 Canvas textAlign=center+textBaseline=middle）
-            # 不使用 getbbox()+crop 重新居中，避免视觉包围盒中心与排版中心不一致
-            if rot != 0:
-                # 旋转文字：用临时图层绘制，再绕 (target_x, target_y) 旋转
-                text_layer = Image.new("RGBA", pil.size, (0, 0, 0, 0))
-                td = ImageDraw.Draw(text_layer)
-                td.text((target_x, target_y), text, font=font, fill=fill_color, anchor="mm")
-                text_layer = text_layer.rotate(rot, center=(target_x, target_y), fillcolor=(0, 0, 0, 0))
-                overlay = Image.alpha_composite(overlay, text_layer)
-            else:
-                draw = ImageDraw.Draw(overlay)
-                draw.text((target_x, target_y), text, font=font, fill=fill_color, anchor="mm")
+                target_x = ox * W
+                target_y = oy * H
 
-            # 透明度通过 overlay alpha 通道单次控制，避免双重叠加
-            if opacity < 1:
-                r, g, b, a = overlay.split()
-                a = a.point(lambda x: int(x * opacity))
-                overlay = Image.merge("RGBA", (r, g, b, a))
+                # 直接用 anchor="mm" 绘制（匹配 Canvas textAlign=center+textBaseline=middle）
+                if rot != 0:
+                    # 旋转文字：用临时图层绘制，再绕 (target_x, target_y) 旋转
+                    text_layer = Image.new("RGBA", pil.size, (0, 0, 0, 0))
+                    td = ImageDraw.Draw(text_layer)
+                    td.text((target_x, target_y), txt, font=font, fill=fill_color, anchor="mm")
+                    text_layer = text_layer.rotate(rot, center=(target_x, target_y), fillcolor=(0, 0, 0, 0))
+                    overlay = Image.alpha_composite(overlay, text_layer)
+                else:
+                    draw = ImageDraw.Draw(overlay)
+                    draw.text((target_x, target_y), txt, font=font, fill=fill_color, anchor="mm")
 
             result = Image.alpha_composite(pil, overlay).convert("RGB")
             result_t = torch.from_numpy(np.array(result).astype(np.float32) / 255.0)
