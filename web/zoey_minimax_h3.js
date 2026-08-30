@@ -267,14 +267,14 @@ const STYLE = `
   border: 1px solid var(--border-color, #555);
   border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .6);
-  max-width: 72vw;
-  max-height: 72vh;
+  max-width: min(46vw, 420px);
+  max-height: min(56vh, 440px);
   overflow: hidden;
 }
 .zoey-ref-hover-img {
   display: block;
-  max-width: 72vw;
-  max-height: 72vh;
+  max-width: min(46vw, 420px);
+  max-height: min(56vh, 440px);
   object-fit: contain;
 }
 .zoey-ref-hover-audio {
@@ -286,6 +286,21 @@ const STYLE = `
   font-size: 40px;
   color: #aaa;
   user-select: none;
+}
+.zoey-ref-hover-video {
+  display: none;
+  max-width: min(46vw, 420px);
+  max-height: min(56vh, 440px);
+  object-fit: contain;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.zoey-ref-hover-audio-el {
+  display: none;
+  width: 300px;
+  max-width: min(46vw, 420px);
+  margin: 12px 14px;
+  pointer-events: auto;
 }
 /* ---- 富文本 prompt 编辑器（创作区卡片：顶部模式条 + 编辑框 + 预览条，合并为一个控件避免 widgets_values 错位） ---- */
 .zoey-prompt-container {
@@ -497,6 +512,55 @@ const STYLE = `
 }
 .zoey-director-header button:hover {
   border-color: #7ec8ff;
+}
+.zoey-loras-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+.zoey-lora-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.zoey-lora-row select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 1px 4px;
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  border: 1px solid #444;
+  border-radius: 4px;
+}
+.zoey-lora-row label {
+  white-space: nowrap;
+  opacity: .75;
+}
+.zoey-lora-row input[type=number] {
+  width: 58px;
+  font-size: 11px;
+  padding: 1px 3px;
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  border: 1px solid #444;
+  border-radius: 4px;
+}
+.zoey-lora-row .zoey-lora-del {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: rgba(255, 255, 255, .06);
+  color: var(--input-text, #ddd);
+  cursor: pointer;
+}
+.zoey-lora-del:hover {
+  border-color: #ff7e7e;
+  color: #ff7e7e;
 }
 .zoey-director-decl {
   width: 100%;
@@ -971,7 +1035,15 @@ function resolveThumbSrc(entry) {
     const src = imgs[0]?.src || imgs[0]?.currentSrc;
     if (src) return src;
   }
+  // 视频文件本身不能当 <img> 渲染（会裂图），留给播放/图标兜底
+  if (entry?.mediaType === "video") return null;
   return buildViewUrl(entry?.filename);
+}
+
+// 媒体播放 URL（真正的视频/音频文件，供 <video>/<audio> 播放）
+function mediaFileUrl(entry) {
+  if (!entry || !entry.filename) return null;
+  return buildViewUrl(entry.filename);
 }
 
 function collectEntries(node) {
@@ -1141,20 +1213,40 @@ function entryThumb(entry) {
   return box;
 }
 
-// ---- @ 缩略图悬停大图预览 ----
+// ---- @ 缩略图悬停预览：图片 / 可播放视频 / 可播放音频 ----
+// 框一次定位不再跟随光标（否则光标永远追不上框，无法点播放控件）；
+// 离开源元素后延迟关闭，光标移入框内则保持打开。
 const HoverPreview = (() => {
-  let el, img, audio, visible = false;
-  let lastX = 0, lastY = 0;
+  let el, img, videoEl, audioEl, audioBox, visible = false;
+  let lastX = 0, lastY = 0, hideTimer = null;
+  // 所有绑定悬停预览的源元素。mousemove 用它判断光标是否还"在素材/预览上"，
+  // 而不是只依赖源元素的 mouseleave——后者在光标滑到预览本体(pointer-events:none)
+  // 或源被替换时不会触发，导致预览卡住不消失。
+  const hoverSources = new WeakSet();
   function ensure() {
     if (el) return;
     el = $el("div", { className: "zoey-ref-hover" });
     img = $el("img", { className: "zoey-ref-hover-img" });
-    audio = $el("div", { className: "zoey-ref-hover-audio", textContent: "🔊" });
-    el.append(img, audio);
+    videoEl = $el("video", { className: "zoey-ref-hover-video", muted: true, loop: true, autoplay: true, playsinline: true, controls: true });
+    audioEl = $el("audio", { className: "zoey-ref-hover-audio-el", controls: true });
+    audioBox = $el("div", { className: "zoey-ref-hover-audio", textContent: "🔊" });
+    el.append(img, videoEl, audioEl, audioBox);
     document.body.appendChild(el);
     document.addEventListener("mousemove", (e) => {
       lastX = e.clientX; lastY = e.clientY;
-      if (visible) place();
+      if (!visible) return;
+      // 光标是否在预览本体上（pointer-events:none 的覆盖层 / 可交互的视频·音频控件）
+      const r = el.getBoundingClientRect();
+      const overOverlay = e.clientX >= r.left - 4 && e.clientX <= r.right + 4
+        && e.clientY >= r.top - 4 && e.clientY <= r.bottom + 4;
+      // 光标是否在某个悬停源（或其子元素）上——elementFromPoint 不受 pointer-events:none 影响
+      let overSource = false;
+      const t = document.elementFromPoint(e.clientX, e.clientY);
+      for (let n = t; n; n = n.parentElement) {
+        if (hoverSources.has(n)) { overSource = true; break; }
+      }
+      if (overOverlay || overSource) cancelHide();
+      else leave(); // 光标既不在预览也不在素材上：安排关闭，别再只 cancelHide 而永不隐藏
     });
     document.addEventListener("pointerdown", () => hide());
   }
@@ -1167,41 +1259,66 @@ const HoverPreview = (() => {
     el.style.left = `${Math.max(8, x)}px`;
     el.style.top = `${Math.max(8, y)}px`;
   }
+  function cancelHide() { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } }
+  function stopPlayback() {
+    try { videoEl?.pause(); if (videoEl) videoEl.currentTime = 0; } catch (e) {}
+    try { audioEl?.pause(); if (audioEl) audioEl.currentTime = 0; } catch (e) {}
+  }
   function hide() {
+    cancelHide();
     visible = false;
+    stopPlayback();
     if (el) el.style.display = "none";
   }
+  function leave() { if (!visible) return; cancelHide(); hideTimer = setTimeout(hide, 300); }
   return {
     show(entry, x, y) {
       ensure();
+      cancelHide();
       lastX = x ?? lastX; lastY = y ?? lastY;
       visible = true;
+      stopPlayback();
+      img.style.display = "none";
+      videoEl.style.display = "none";
+      audioEl.style.display = "none";
+      audioBox.style.display = "none";
+      const url = mediaFileUrl(entry);
       if (entry?.mediaType === "audio") {
-        img.style.display = "none";
-        audio.style.display = "flex";
-      } else {
-        audio.style.display = "none";
-        const url = entry ? resolveThumbSrc(entry) : null;
         if (url) {
-          img.style.display = "block";
-          img.src = url;
+          audioEl.src = url;
+          audioEl.style.display = "block";
         } else {
-          img.style.display = "none";
+          audioBox.style.display = "flex";
         }
+      } else if (entry?.mediaType === "video") {
+        if (url) {
+          videoEl.src = url;
+          videoEl.style.display = "block";
+          videoEl.play().catch(() => {});
+        } else {
+          const turl = resolveThumbSrc(entry);
+          if (turl) { img.src = turl; img.style.display = "block"; }
+        }
+      } else {
+        const turl = resolveThumbSrc(entry);
+        if (turl) { img.src = turl; img.style.display = "block"; }
       }
       el.style.display = "block";
       place();
     },
     hide,
+    leave,
+    trackSource(elNode) { hoverSources.add(elNode); },
   };
 })();
 
-// 给任意缩略图元素绑定悬停大图（chip / 预览条 / @ 下拉条目）
+// 给任意缩略图元素绑定悬停预览（chip / 预览条 / @ 下拉条目）
 function attachHover(elNode, entry) {
+  HoverPreview.trackSource(elNode);
   elNode.addEventListener("mouseenter", (e) => {
     HoverPreview.show(entry, e.clientX, e.clientY);
   });
-  elNode.addEventListener("mouseleave", () => HoverPreview.hide());
+  elNode.addEventListener("mouseleave", () => HoverPreview.leave());
 }
 
 // ---- 富文本 prompt 的 chip 渲染 / 串行化 ----
@@ -2885,6 +3002,137 @@ function createLibraryWidget(node, name, inputData) {
   return widget;
 }
 
+// ---- LoRA 列表控件（默认一行，＋ 添加，强度与 lora 同行） ----
+function createLorasWidget(node, name, inputData) {
+  const container = document.createElement("div");
+  container.className = "zoey-loras";
+
+  const head = document.createElement("div");
+  head.className = "zoey-director-header";
+  const title = document.createElement("span");
+  title.textContent = "🎚 LoRA";
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "＋ 添加";
+  addBtn.title = "添加一行 LoRA（名称 + 模型强度 + CLIP 强度）";
+  addBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); addRow(); });
+  head.append(title, addBtn);
+
+  const list = document.createElement("div");
+  list.className = "zoey-loras-list";
+  container.append(head, list);
+
+  const widget = new DOMWidgetImpl({
+    node,
+    name,
+    type: "customtext",
+    element: container,
+    options: {
+      hideOnZoom: true,
+      getValue: () => JSON.stringify(node._zoeyLoras || []),
+      setValue: (v) => {
+        try { node._zoeyLoras = JSON.parse(v || "[]") || []; } catch (e) { node._zoeyLoras = []; }
+        renderLoras();
+      },
+    },
+  });
+  widget.inputEl = list;
+  addWidget(node, widget);
+
+  function loraOptions() {
+    const listW = node.widgets?.find((w) => w.name === "lora_list");
+    const vals = listW?.options?.values;
+    return (Array.isArray(vals) && vals.length) ? vals : [];
+  }
+
+  function normalizeLoras() {
+    if (!Array.isArray(node._zoeyLoras)) node._zoeyLoras = [];
+    if (!node._zoeyLoras.length) node._zoeyLoras = [{ lora: "", model: 1.0, clip: 1.0 }];
+    node._zoeyLoras.forEach((e) => {
+      if (typeof e.model !== "number" || !isFinite(e.model)) e.model = 1.0;
+      if (typeof e.clip !== "number" || !isFinite(e.clip)) e.clip = 1.0;
+      if (typeof e.lora !== "string") e.lora = "";
+    });
+  }
+
+  function addRow() {
+    normalizeLoras();
+    node._zoeyLoras.push({ lora: loraOptions()[0] || "", model: 1.0, clip: 1.0 });
+    renderLoras();
+  }
+
+  function renderLoras() {
+    normalizeLoras();
+    list.replaceChildren();
+    node._zoeyLoras.forEach((entry, i) => list.appendChild(loraRow(entry, i)));
+  }
+
+  function loraRow(entry, i) {
+    const row = document.createElement("div");
+    row.className = "zoey-lora-row";
+
+    const opts = loraOptions();
+    const sel = document.createElement("select");
+    for (const o of opts) {
+      const opt = document.createElement("option");
+      opt.value = o; opt.textContent = o;
+      sel.appendChild(opt);
+    }
+    if (entry.lora && opts.includes(entry.lora)) sel.value = entry.lora;
+    else if (!opts.includes(entry.lora)) { entry.lora = opts[0] || ""; sel.value = entry.lora; }
+    sel.addEventListener("change", () => { entry.lora = sel.value; });
+
+    const modelLbl = document.createElement("label");
+    modelLbl.textContent = "模型";
+    const modelIn = document.createElement("input");
+    modelIn.type = "number"; modelIn.step = "0.01"; modelIn.value = entry.model;
+    modelIn.addEventListener("input", () => { entry.model = parseFloat(modelIn.value) || 0; });
+
+    const clipLbl = document.createElement("label");
+    clipLbl.textContent = "CLIP";
+    const clipIn = document.createElement("input");
+    clipIn.type = "number"; clipIn.step = "0.01"; clipIn.value = entry.clip;
+    clipIn.addEventListener("input", () => { entry.clip = parseFloat(clipIn.value) || 0; });
+
+    const del = document.createElement("button");
+    del.className = "zoey-lora-del";
+    del.textContent = "✕";
+    del.title = "删除这一行";
+    del.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      node._zoeyLoras.splice(i, 1);
+      normalizeLoras();
+      renderLoras();
+    });
+
+    row.append(sel, modelLbl, modelIn, clipLbl, clipIn, del);
+    return row;
+  }
+
+  renderLoras();
+  return widget;
+}
+
+// 自愈：加载时把不在选项里的 combo 值、非数字的 float 值重置为默认，避免 schema 变更导致校验失败
+function selfHealWidgets(node) {
+  for (const w of node.widgets || []) {
+    if (!w) continue;
+    try {
+      if (w.type === "combo" && Array.isArray(w.options?.values) && !w.options.values.includes(w.value)) {
+        const dflt = w.options.default ?? w.options.values[0];
+        w.value = w.options.values.includes(dflt) ? dflt : w.options.values[0];
+        if (w.callback) { try { w.callback(w.value); } catch (e) {} }
+      } else if (w.type === "number") {
+        const n = parseFloat(w.value);
+        if (typeof w.value !== "number" || !isFinite(n) || String(w.value).trim() === "") {
+          const d = w.options?.default;
+          w.value = (typeof d === "number" && isFinite(d)) ? d : 0;
+          if (w.callback) { try { w.callback(w.value); } catch (e) {} }
+        }
+      }
+    } catch (e) { /* 单个控件自愈失败不影响整体 */ }
+  }
+}
+
 function setupDirectorToggle(node, dirWidget) {
   const modeW = node.widgets?.find((w) => w.name === "director_mode");
   const promptW = node.widgets?.find((w) => w.name === "prompt");
@@ -3214,6 +3462,16 @@ function patchWidgets() {
     if (node?.comfyClass === NODE_TYPE && inputName === "ref_purposes") {
       return { widget: createRefPurposesWidget(node, inputName, inputData) };
     }
+    if (node?.comfyClass === NODE_TYPE && inputName === "loras") {
+      const loraWidget = createLorasWidget(node, inputName, inputData);
+      // 链到 onConfigure：所有控件值就绪后自愈一次（schema 变更导致的错位值）
+      const prevConf = node.onConfigure;
+      node.onConfigure = (...args) => {
+        try { prevConf?.call(node, ...args); } catch (e) { console.error("[Zoey MiniMax H3] loras onConfigure:", e); }
+        try { selfHealWidgets(node); } catch (e) { console.error("[Zoey MiniMax H3] selfHeal:", e); }
+      };
+      return { widget: loraWidget };
+    }
     const strRes = origString.apply(this, arguments);
     relabelWidget(node, inputName, strRes?.widget);
     return strRes;
@@ -3236,6 +3494,11 @@ function patchWidgets() {
     }
     const cmbRes = origCombo.apply(this, arguments);
     relabelWidget(node, inputName, cmbRes?.widget);
+    if (node?.comfyClass === NODE_TYPE && inputName === "lora_list" && cmbRes?.widget) {
+      // 仅作为 LoRA 行下拉的选项源，不显示在节点上
+      cmbRes.widget.hidden = true;
+      if (cmbRes.widget.element) cmbRes.widget.element.style.display = "none";
+    }
     return cmbRes;
   };
 

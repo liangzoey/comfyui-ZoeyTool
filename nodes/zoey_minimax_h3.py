@@ -19,6 +19,104 @@ try:
 except Exception:
     _H3_AVAILABLE = False
 
+# SageAttention：是否可用与具体实现，来自核心 attention 模块（sageattention 包已装则启用）
+try:
+    from comfy.ldm.modules.attention import attention_sage, SAGE_ATTENTION_IS_AVAILABLE
+    _SAGE_AVAILABLE = SAGE_ATTENTION_IS_AVAILABLE
+except Exception:
+    attention_sage = None
+    _SAGE_AVAILABLE = False
+
+
+def _apply_sage_attention(model):
+    """在模型克隆上启用 SageAttention（仅影响该克隆，不改全局 optimized_attention）。
+
+    通过 set_model_optimized_attention 写入 transformer_options 的
+    optimized_attention_override，MiniMaxH3 Attention 层采样时会走 sageattn。
+    """
+    if not _SAGE_AVAILABLE or attention_sage is None:
+        raise ValueError("已开启 sage_attention，但 sageattention 包不可用（请先 pip install sageattention）")
+    m = model.clone()
+    to = m.model_options.get("transformer_options", {}).copy()
+    m.model_options["transformer_options"] = to
+    m.set_model_optimized_attention(attention_sage)
+    return m
+
+
+_NONE = "无"
+
+
+def _vae_names():
+    """VAE 文件列表（复用官方 VAELoader 的分类，含 video_taes / pixel_space）。"""
+    import nodes
+    return nodes.VAELoader.vae_list(nodes.VAELoader)
+
+
+def _load_unet(unet_name):
+    import folder_paths
+    import comfy.sd
+    path = folder_paths.get_full_path_or_raise("diffusion_models", unet_name)
+    return comfy.sd.load_diffusion_model(path)
+
+
+def _load_clip(clip_name):
+    import folder_paths
+    import comfy.sd
+    clip_type = getattr(comfy.sd.CLIPType, "MINIMAX", comfy.sd.CLIPType.STABLE_DIFFUSION)
+    path = folder_paths.get_full_path_or_raise("text_encoders", clip_name)
+    return comfy.sd.load_clip(
+        ckpt_paths=[path],
+        embedding_directory=folder_paths.get_folder_paths("embeddings"),
+        clip_type=clip_type,
+    )
+
+
+def _load_vae(vae_name):
+    import nodes
+    return nodes.VAELoader().load_vae(vae_name)[0]
+
+
+def _apply_lora(model, clip, lora_name, strength_model, strength_clip):
+    if not lora_name or lora_name == _NONE or (strength_model == 0 and strength_clip == 0):
+        return model, clip
+    import folder_paths
+    import comfy.utils
+    import comfy.sd
+    path = folder_paths.get_full_path_or_raise("loras", lora_name)
+    lora, metadata = comfy.utils.load_torch_file(path, safe_load=True, return_metadata=True)
+    return comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip,
+                                         lora_metadata=metadata)
+
+
+def _parse_loras(loras_json):
+    """解析前端 LoRA 列表 JSON 为 [(lora, strength_model, strength_clip), ...]。"""
+    try:
+        data = json.loads(loras_json or "[]")
+    except Exception:
+        data = []
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return []
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        lora = str(item.get("lora", "") or "").strip()
+        if not lora or lora == _NONE:
+            continue
+        try:
+            sm = float(item.get("model", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            sm = 1.0
+        try:
+            sc = float(item.get("clip", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            sc = 1.0
+        out.append((lora, sm, sc))
+    return out
+
+
 _IMAGE_SLOTS = 9
 _VIDEO_SLOTS = 3
 _AUDIO_SLOTS = 3
@@ -468,9 +566,9 @@ def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio
 class ZoeyMiniMaxH3ReferenceToVideo:
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {
-            "audio_vae": ("VAE",),
-        }
+        import folder_paths
+        loras = [_NONE] + folder_paths.get_filename_list("loras")
+        optional = {}
         for i in range(_IMAGE_SLOTS):
             optional[f"ref_image_{i}"] = ("IMAGE",)
         for i in range(_VIDEO_SLOTS):
@@ -480,8 +578,6 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             optional[f"ref_audio_{i}"] = ("AUDIO",)
         return {
             "required": {
-                "clip": ("CLIP",),
-                "vae": ("VAE",),
                 "prompt": ("STRING", {
                     "multiline": True,
                     "placeholder": "参考模式用 @P1/@V1/@A1 引用素材；T2V 纯文本；I2V 用首张参考图作首帧；自动按连接选择",
@@ -519,6 +615,12 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "placeholder": "永久全局素材库（前端渲染，值不存工作流）",
                 }),
                 "mode": (["参考", "T2V", "I2V", "自动"], {"default": "参考"}),
+                "sage_attention": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "启用 SageAttention",
+                    "label_off": "关闭",
+                    "tooltip": "对该模型启用 SageAttention 加速（仅影响此模型克隆；需已安装 sageattention）。",
+                }),
                 "dialogue_convert": ("BOOLEAN", {
                     "default": True,
                     "label_on": "转换",
@@ -529,18 +631,41 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "default": "{}",
                     "placeholder": "参考图用途标注 JSON（前端渲染，如 {\"0\":\"scene\"}）",
                 }),
+                # ── 内置加载器（追加在末尾：不动上方已有控件的索引，避免旧工作流 widgets_values 错位） ──
+                "unet_name": (folder_paths.get_filename_list("diffusion_models"), {"tooltip": "MiniMax H3 的 DiT 模型（diffusion_models 文件夹）。"}),
+                "clip_name": (folder_paths.get_filename_list("text_encoders"), {"tooltip": "MiniMax H3 的 Qwen3-VL CLIP（text_encoders 文件夹，type=minimax）。"}),
+                "vae_name": (_vae_names(), {"tooltip": "MiniMax H3 视频 VAE。"}),
+                "audio_vae_name": ([_NONE] + _vae_names(), {"default": _NONE, "tooltip": "MiniMax H3 音频 VAE（引用音频素材时才需要）。"}),
+                "lora_list": (loras, {"default": _NONE, "tooltip": "LoRA 下拉选项源（前端隐藏，仅提供文件名列表）。"}),
+                "loras": ("STRING", {
+                    "multiline": True,
+                    "default": "[]",
+                    "placeholder": '[{"lora":"名字.safetensors","model":1.0,"clip":1.0}]',
+                    "tooltip": "LoRA 列表（前端渲染；每个条目含 lora 文件名 + model/clip 强度）。",
+                }),
             },
             "optional": optional,
         }
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT", "STRING")
-    RETURN_NAMES = ("positive", "LATENT", "提示词(已转换)")
+    RETURN_TYPES = ("MODEL", "VAE", "VAE", "CONDITIONING", "LATENT", "STRING")
+    RETURN_NAMES = ("model", "vae", "audio_vae", "positive", "LATENT", "提示词(已转换)")
     FUNCTION = "process"
     CATEGORY = "Zoey Tool/MiniMax H3"
 
-    def process(self, clip, vae, prompt, mode, resolution, aspect, duration,
+    def process(self, unet_name, clip_name, vae_name, audio_vae_name,
+                lora_list, loras,
+                prompt, mode, resolution, aspect, duration,
                 ref_image_size, auto_declaration, director_mode, director_shots,
-                library="", audio_vae=None, dialogue_convert=True, ref_purposes="{}", **refs):
+                library="", sage_attention=False,
+                dialogue_convert=True, ref_purposes="{}", **refs):
+        # ── 内置模型加载：UNet + CLIP + VAE + 音频 VAE，再叠 LoRA ──
+        model = _load_unet(unet_name)
+        clip = _load_clip(clip_name)
+        vae = _load_vae(vae_name)
+        audio_vae = _load_vae(audio_vae_name) if audio_vae_name and audio_vae_name != _NONE else None
+        for lora_name, lora_model, lora_clip in _parse_loras(loras):
+            model, clip = _apply_lora(model, clip, lora_name, lora_model, lora_clip)
+
         ref_images = {}
         for i in range(_IMAGE_SLOTS):
             ref_images[f"ref_image_{i}"] = refs.get(f"ref_image_{i}")
@@ -589,15 +714,22 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             # I2V：第一张已连接参考图作首帧；≥2 张时最后一张作尾帧（首尾帧）
             first_frame = ref_images[f"ref_image_{image_slots[0]}"] if (eff == "I2V" and image_slots) else None
             last_frame = ref_images[f"ref_image_{image_slots[-1]}"] if (eff == "I2V" and len(image_slots) >= 2) else None
-            return self._run_text_image(clip, vae, prompt, width, height, duration,
-                                        director_mode, director_shots, eff == "I2V",
-                                        first_frame, dialogue_convert, last_frame)
+            cond, latent, prompt_text = self._run_text_image(
+                clip, vae, prompt, width, height, duration,
+                director_mode, director_shots, eff == "I2V",
+                first_frame, dialogue_convert, last_frame)
+        else:
+            cond, latent, prompt_text = self._run_ref2va(
+                clip, vae, audio_vae, prompt, ref_images, ref_videos,
+                ref_video_audios, ref_audios, counts, width, height,
+                duration, ref_image_size, auto_declaration, director_mode,
+                director_shots, library, image_slots, dialogue_convert,
+                ref_purposes)
 
-        return self._run_ref2va(clip, vae, audio_vae, prompt, ref_images, ref_videos,
-                                ref_video_audios, ref_audios, counts, width, height,
-                                duration, ref_image_size, auto_declaration, director_mode,
-                                director_shots, library, image_slots, dialogue_convert,
-                                ref_purposes)
+        # 集成 SageAttention：在模型克隆上启用，随 CONDITIONING/LATENT 一并返回
+        if sage_attention:
+            model = _apply_sage_attention(model)
+        return (model, vae, audio_vae, cond, latent, prompt_text)
 
     def _compose_plain_director(self, shots_json, dialogue_convert=True):
         """T2V/I2V 分镜组合：只拼 CUT/TRANSITION/对白/音效/配乐，不做 @ 引用展开。"""
@@ -731,7 +863,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             _inject_library(ref_images, ref_audios, img_order, aud_order, library)
 
         if audio_vae is None and (paired_audio or any(a is not None for a in ref_audios.values())):
-            raise ValueError("参考模式引用了音频素材，请连接 audio_vae 输入")
+            raise ValueError("参考模式引用了音频素材，请选择 audio_vae_name")
 
         outputs = MiniMaxH3ReferenceToVideo.execute(
             clip, vae, audio_vae, prompt_text, width, height, length,
