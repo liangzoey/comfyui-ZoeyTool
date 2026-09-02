@@ -894,6 +894,7 @@ class ZoeyStylePrompt:
                 "escape_route": ("STRING", {"default": "", "multiline": False, "tooltip": "[ESCAPE_ROUTE] 逃跑路线，留空保留占位符"}),
                 "final": ("STRING", {"default": "", "multiline": False, "tooltip": "[FINAL] 最终形态/落点，留空保留占位符"}),
                 "mood": ("STRING", {"default": "", "multiline": False, "tooltip": "[MOOD] 情绪，留空保留占位符"}),
+                "lock_background": (["true", "false"], {"default": "true", "tooltip": "开启后强化提示词：锁定首帧背景/场景/光线/构图不变，防背景漂移"}),
             },
         }
 
@@ -902,8 +903,22 @@ class ZoeyStylePrompt:
     FUNCTION = "run"
     CATEGORY = "Zoey/Minimax H3"
 
-    def run(self, style, morph="", escape_route="", final="", mood=""):
+    _LOCK = (" ENTIRE FRAME STAYS FIXED: the uploaded first frame is the one true reference — its real subject "
+             "(whatever it is, a person or an object) AND its whole background, scene, layout, lighting and "
+             "camera framing all stay 100% identical for the entire video. The real subject keeps exactly the "
+             "same identity, face, clothing, proportions and appearance it had in that first frame — no identity "
+             "drift, no facial or clothing change, no re-cast, no new object added or removed, no scene or "
+             "background change, no camera re-framing, pan or pull-back; the camera holds one steady locked shot. "
+             "The only thing that appears and moves is the small hand-drawn animated character, which never "
+             "replaces, covers or alters the real subject.")
+
+    def run(self, style, morph="", escape_route="", final="", mood="", lock_background="true"):
         p = _STYLE_MAP.get(style, "")
+        if lock_background == "true":
+            p = p.replace("never changes appearance, never vanishes, never switches.",
+                          "never changes appearance, never vanishes, never switches." + self._LOCK)
+            p = p.replace("nothing on walls.",
+                          "nothing on walls, no identity drift, no facial change, no clothing change, no background change, no scene change, no camera re-framing, no revealing new scenery.")
         for key, val in (("[MORPH]", morph), ("[ESCAPE_ROUTE]", escape_route),
                          ("[FINAL]", final), ("[MOOD]", mood)):
             if val:
