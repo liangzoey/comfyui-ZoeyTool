@@ -873,70 +873,42 @@ class ZoeyMiniMaxH3ReferenceToVideo:
 
 
 # ── 风格下拉选择器（内置多风格 → 输出对应提示词；可选把模板里的 [STYLE] 替换掉） ──
-_STYLE_MAP = {
-    "像素 Pixel": "chunky pixel art, limited palette, retro arcade edges",
-    "蜡笔童趣 Crayon": "thick waxy crayon strokes, uneven specks, warm playful childrens drawing",
-    "赛博朋克 Cyberpunk": "electric cyan & magenta neon lines, chromatic glow, grid reflections, luminous trace",
-    "纸片拼贴 Paper Collage": "flat colored paper shapes, torn edges, layered cutout collage",
-    "水墨 Sumi-e": "flowing black ink, delicate brush strokes, soft ink bleed, rice-paper texture",
-    "美漫 Bold Comic": "heavy black outlines, halftone dots, punchy flat colors, kinetic action lines",
-    "日漫 Anime": "fine line art, cel flat colors, soft shading, expressive eyes",
-    "圆珠笔涂鸦 Ballpoint Doodle": "thin single-color blue ballpoint linework on plain white paper, nervous scratchy doodle",
-    "黑白版画 Linocut": "stamp-like black ink blocks, carve marks, high contrast printmaking",
-    "石墨铅笔 Graphite Pencil": "gentle crosshatch, soft graphite shading, melancholic precise drawing",
-    "水彩 Watercolor": "translucent washes, soft color bleed, airy loose watercolor",
-    "油画 Oil": "thick impasto strokes, rich texture, dramatic light, painterly oil",
-    "黏土动画 Claymation": "stop-motion clay or plasticine, soft rounded forms, textured fingerprints",
-    "折纸 Origami": "folded paper facets, crisp geometric creases, origami",
-    "玻璃彩绘 Stained Glass": "jewel-like colored glass panes, dark lead lines, luminous",
-    "霓虹灯管 Neon": "glowing neon tube lines, dark background, luminous sign strokes",
-    "波普 Pop Art": "bold primary colors, halftone dots, flat comic pop art",
-    "极简线条 Minimal Line": "single-weight thin colored line on solid background, sparse minimal doodle",
-    "矢量扁平 Flat Vector": "clean vector illustration, flat solid color blocks, no texture",
-    "低多边形 Low-Poly": "faceted low-poly triangular mesh, flat-shaded, geometric",
-    "等距 Isometric": "isometric 3D grid, blocky objects, playful game art",
-    "蒸汽朋克 Steampunk": "brass gears, copper pipes, sepia tones, intricate mechanical detail",
-    "复古胶片 Retro Film": "grainy 16mm film, warm faded colors, soft vignette",
-    "中国工笔 Gongbi": "fine delicate gongbi brushwork, muted mineral pigments, refined traditional",
-    "岩彩 Mineral Pigment": "layered mineral pigment, textured rock colors, matte",
-    "布艺拼贴 Fabric": "stitched fabric, cloth appliqué, thread details, tactile textile",
-    "羊毛毡 Felt": "needle-felted wool, soft fuzzy texture, handmade warmth",
-    "彩铅 Colored Pencil": "colored pencil strokes, soft waxy shading, sketchbook",
-    "马克笔 Marker": "bold marker strokes, vivid flat coloring, comic rough",
-    "喷漆涂鸦 Graffiti": "spray paint, stencil or bubble lettering, urban street colors",
-    "剪纸剪影 Silhouette": "solid black silhouette papercut, single-color, graphic",
-    "儿童简笔画 Child Doodle": "naive childlike stick-figure doodle, plain crayon on paper",
-    "光栅印刷 Halftone": "halftone dot raster, newsprint print, monochrome",
-    "复古霓虹 Retro Neon": "retro 80s neon pixel sign, dark synthwave palette",
-}
+# 12 种风格整段提示词（数据在 zoey_minimax_h3_styles.py，便于单独维护）
+from .zoey_minimax_h3_styles import STYLE_MAP as _STYLE_MAP
 
 
 class ZoeyStylePrompt:
-    """下拉选风格 → 输出对应提示词；附模板时把 [STYLE] 替换为风格描述。"""
+    """下拉选风格 → 输出该风格整段 MiniMax H3 提示词；可选替换占位符。
+
+    占位符：[MORPH] / [ESCAPE_ROUTE] / [FINAL] / [MOOD]，不填则原样保留。
+    """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "style": (list(_STYLE_MAP.keys()), {"default": "像素 Pixel"}),
+                "style": (list(_STYLE_MAP.keys()), {"default": "水墨 sumi-e"}),
             },
             "optional": {
-                "template": ("STRING", {"default": "", "multiline": True, "tooltip": "可留空；非空时把其中的 [STYLE] 替换成所选风格的英文描述"}),
+                "morph": ("STRING", {"default": "", "multiline": False, "tooltip": "[MORPH] 变形成什么，留空保留占位符"}),
+                "escape_route": ("STRING", {"default": "", "multiline": False, "tooltip": "[ESCAPE_ROUTE] 逃跑路线，留空保留占位符"}),
+                "final": ("STRING", {"default": "", "multiline": False, "tooltip": "[FINAL] 最终形态/落点，留空保留占位符"}),
+                "mood": ("STRING", {"default": "", "multiline": False, "tooltip": "[MOOD] 情绪，留空保留占位符"}),
             },
         }
 
     RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("style_prompt", "style_label")
+    RETURN_NAMES = ("prompt", "style_label")
     FUNCTION = "run"
     CATEGORY = "Zoey/Minimax H3"
 
-    def run(self, style, template=""):
-        desc = _STYLE_MAP.get(style, "")
-        if template and "[STYLE]" in template:
-            out = template.replace("[STYLE]", desc)
-        else:
-            out = desc
-        return (out, style)
+    def run(self, style, morph="", escape_route="", final="", mood=""):
+        p = _STYLE_MAP.get(style, "")
+        for key, val in (("[MORPH]", morph), ("[ESCAPE_ROUTE]", escape_route),
+                         ("[FINAL]", final), ("[MOOD]", mood)):
+            if val:
+                p = p.replace(key, val)
+        return (p, style)
 
 
 NODE_CLASS_MAPPINGS = {}
