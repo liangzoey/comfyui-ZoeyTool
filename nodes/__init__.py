@@ -54,6 +54,13 @@ try:
 except Exception:
     pass
 
+# ── H3 条件 latent 对齐防护（防 ComfyUI 更新覆盖核心修复） ──
+try:
+    from . import zoey_h3_latent_guard as _h3_guard
+    _h3_guard.apply()
+except Exception:
+    pass
+
 # ── 合并所有节点映射 ──
 NODE_CLASS_MAPPINGS = {
     **CROPPER_MAPPINGS,

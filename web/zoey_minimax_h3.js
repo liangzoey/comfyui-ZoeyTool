@@ -3207,13 +3207,15 @@ class RefPicker {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          this.selected = Math.min(this.selected + 1, this.entries.length - 1);
+          this.selected = (this.selected + 1) % this.entries.length;
           this.#refreshSelection();
+          this.#scrollSelected();
           return;
         case "ArrowUp":
           e.preventDefault();
-          this.selected = Math.max(this.selected - 1, 0);
+          this.selected = (this.selected - 1 + this.entries.length) % this.entries.length;
           this.#refreshSelection();
+          this.#scrollSelected();
           return;
         case "Enter":
         case "Tab":
@@ -3304,6 +3306,13 @@ class RefPicker {
     this.dropdown.querySelectorAll(".zoey-ref-item").forEach((el, i) => {
       el.classList.toggle("zoey-ref-item--selected", i === this.selected);
     });
+  }
+
+  // 键盘上下移动时，把当前选中项自动滚进可见范围（"到底"时继续弹出更下一个）
+  #scrollSelected() {
+    if (!this.dropdown) return;
+    const el = this.dropdown.querySelectorAll(".zoey-ref-item")[this.selected];
+    el?.scrollIntoView({ block: "nearest" });
   }
 
   #position() {
