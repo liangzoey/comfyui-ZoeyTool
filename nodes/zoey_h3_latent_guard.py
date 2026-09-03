@@ -16,8 +16,8 @@ def _align(payload, ps):
         return torch.nn.functional.pad(z, pad, mode="circular")
 
     kfs = payload.get("keyframes")
+    nk = []
     if kfs is not None:
-        nk = []
         for kf in kfs:
             kf = dict(kf)
             l = kf.get("latent")
@@ -28,12 +28,10 @@ def _align(payload, ps):
                 kf["latent_w"] = l2.shape[4]
             nk.append(kf)
         payload["keyframes"] = nk
-        payload["cond_video_latents"] = [kf["latent"] for kf in nk if kf.get("latent") is not None]
-        payload["cond_audio_latents"] = [kf["audio_latent"] for kf in nk if kf.get("audio_latent") is not None]
 
     refs = payload.get("refs")
+    nr = []
     if refs is not None:
-        nr = []
         for r in refs:
             r = dict(r)
             l = r.get("latent")
@@ -46,8 +44,17 @@ def _align(payload, ps):
                     r["latent_w"] = l2.shape[4]
             nr.append(r)
         payload["refs"] = nr
-        payload["cond_video_latents"] = payload.get("cond_video_latents", []) + [r["latent"] for r in nr if r.get("latent") is not None]
-        payload["cond_audio_latents"] = payload.get("cond_audio_latents", []) + [r["audio_latent"] for r in nr if r.get("audio_latent") is not None]
+
+    # Rebuild the cond lists from the aligned keyframes/refs, each exactly once.
+    # The core's extra_conds already filled cond_video_latents/cond_audio_latents
+    # from the (unpadded) refs; appending here would double-count a single
+    # reference (2x rows) and crash patchify_video with a shape mismatch.
+    payload["cond_video_latents"] = (
+        [kf["latent"] for kf in nk if kf.get("latent") is not None]
+        + [r["latent"] for r in nr if r.get("latent") is not None])
+    payload["cond_audio_latents"] = (
+        [kf["audio_latent"] for kf in nk if kf.get("audio_latent") is not None]
+        + [r["audio_latent"] for r in nr if r.get("audio_latent") is not None])
 
 
 def apply():
