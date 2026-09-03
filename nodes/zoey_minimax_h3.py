@@ -875,6 +875,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
 # ── 风格下拉选择器（内置多风格 → 输出对应提示词；可选把模板里的 [STYLE] 替换掉） ──
 # 12 种风格整段提示词（数据在 zoey_minimax_h3_styles.py，便于单独维护）
 from .zoey_minimax_h3_styles import STYLE_MAP as _STYLE_MAP
+from .zoey_minimax_h3_styles_dual import DUAL_STYLE_MAP as _DUAL_STYLE_MAP
 
 
 class ZoeyStylePrompt:
@@ -895,6 +896,7 @@ class ZoeyStylePrompt:
                 "final": ("STRING", {"default": "", "multiline": False, "tooltip": "[FINAL] 最终形态/落点，留空保留占位符"}),
                 "mood": ("STRING", {"default": "", "multiline": False, "tooltip": "[MOOD] 情绪，留空保留占位符"}),
                 "lock_background": (["true", "false"], {"default": "true", "tooltip": "开启后强化提示词：锁定首帧背景/场景/光线/构图不变，防背景漂移"}),
+                "dual_ref": ("BOOLEAN", {"default": False, "tooltip": "双图版：图1真实主体不变，图2被重渲染成所选风格并与之互动；关=单图版(凭空手绘角色)"}),
             },
         }
 
@@ -912,13 +914,18 @@ class ZoeyStylePrompt:
              "The only thing that appears and moves is the small hand-drawn animated character, which never "
              "replaces, covers or alters the real subject.")
 
-    def run(self, style, morph="", escape_route="", final="", mood="", lock_background="true"):
-        p = _STYLE_MAP.get(style, "")
+    def run(self, style, morph="", escape_route="", final="", mood="", lock_background="true", dual_ref=False):
+        src = _DUAL_STYLE_MAP if dual_ref else _STYLE_MAP
+        p = src.get(style) or _STYLE_MAP.get(style, "")
         if lock_background == "true":
-            p = p.replace("never changes appearance, never vanishes, never switches.",
-                          "never changes appearance, never vanishes, never switches." + self._LOCK)
-            p = p.replace("nothing on walls.",
-                          "nothing on walls, no identity drift, no facial change, no clothing change, no background change, no scene change, no camera re-framing, no revealing new scenery.")
+            if dual_ref:
+                p = p.replace("nothing on walls.",
+                              "nothing on walls. <Picture 1> subject and its whole real scene, background, lighting and camera framing stay 100% identical for the entire video; the stylized <Picture 2> subject never replaces, covers or alters the <Picture 1> subject or the real scene.")
+            else:
+                p = p.replace("never changes appearance, never vanishes, never switches.",
+                              "never changes appearance, never vanishes, never switches." + self._LOCK)
+                p = p.replace("nothing on walls.",
+                              "nothing on walls, no identity drift, no facial change, no clothing change, no background change, no scene change, no camera re-framing, no revealing new scenery.")
         for key, val in (("[MORPH]", morph), ("[ESCAPE_ROUTE]", escape_route),
                          ("[FINAL]", final), ("[MOOD]", mood)):
             if val:

@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-zoeytool"
 description = "ComfyUI多功能工具包 - 图像/视频处理、翻译、提示词生成"
-version = "1.0.1"
+version = "1.1.0"
 license = { file = "LICENSE.txt" }
 dependencies = [
     "torch>=2.0.0",
