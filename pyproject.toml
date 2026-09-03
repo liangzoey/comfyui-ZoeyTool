@@ -18,6 +18,6 @@ dependencies = [
 Repository = "https://github.com/liangzoey/comfyui-ZoeyTool"
 
 [tool.comfy]
-PublisherId = "liangzoey"
+PublisherId = "zoeyliangliang"
 DisplayName = "ComfyUI-ZoeyTool"
 Icon = "https://raw.githubusercontent.com/liangzoey/comfyui-ZoeyTool/main/icon.svg"
