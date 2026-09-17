@@ -117,6 +117,63 @@ def _parse_loras(loras_json):
     return out
 
 
+def _parse_director_shots(director_shots, prompt):
+    """解析分镜 JSON；空则退回单镜头 prompt。返回 shots: [{prompt,duration,...}]。"""
+    data = None
+    try:
+        data = json.loads(director_shots or "[]")
+    except Exception:
+        data = None
+    shots = None
+    if isinstance(data, dict):
+        shots = data.get("shots")
+    elif isinstance(data, list):
+        shots = data
+    if isinstance(shots, list) and shots:
+        return shots
+    return [{"prompt": (prompt or "").strip() or "场景", "duration": 5.0}]
+
+
+def _segment_shots(shots, segment_mode, segment_size, hard_max=15.0):
+    """把 shots 分成 ≤segment_size 的段（长视频分段）。
+
+    segment_mode:
+      "手动(每镜一段)" -> 每镜成一段，时长 clamp 到 hard_max。
+      "自动"        -> 超长镜(>segment_size)拆成多个子段，相邻短镜合并成≤segment_size 段。
+    返回 [{"shots":[...], "duration": 秒}]。
+    """
+    if not shots:
+        return []
+    size = float(segment_size or hard_max)
+    segs = []
+    if segment_mode and str(segment_mode).startswith("手动"):
+        for s in shots:
+            d = float(s.get("duration", 5.0) or 5.0)
+            segs.append({"shots": [s], "duration": min(d, hard_max)})
+        return segs
+    cur = {"shots": [], "duration": 0.0}
+    for s in shots:
+        d = float(s.get("duration", 5.0) or 5.0)
+        if d > size:
+            if cur["shots"]:
+                segs.append(cur)
+                cur = {"shots": [], "duration": 0.0}
+            while d > size:
+                segs.append({"shots": [s], "duration": size})
+                d -= size
+            if d > 0:
+                segs.append({"shots": [s], "duration": d})
+        else:
+            if cur["shots"] and cur["duration"] + d > size:
+                segs.append(cur)
+                cur = {"shots": [], "duration": 0.0}
+            cur["shots"].append(s)
+            cur["duration"] += d
+    if cur["shots"]:
+        segs.append(cur)
+    return segs
+
+
 _IMAGE_SLOTS = 9
 _VIDEO_SLOTS = 3
 _AUDIO_SLOTS = 3
@@ -264,6 +321,238 @@ def _build_purpose_lines(ref_purposes, image_slots):
         if tpl:
             lines.append(tpl(image_slots.index(slot) + 1))
     return lines
+
+
+# ── 3D 白模导演台：布局 JSON → 空间关系文字（机位段 + 站位段） ──
+# 中文描述给 H3，帮助它理解"谁在谁前/左右、朝向哪、机位多近多高多广"。
+# 前端 composeLayoutProse 是本函数的 JS 镜像，两端算法必须逐字一致。
+
+import math as _layout_math
+
+
+def _wrap_deg(a):
+    a = float(a or 0) % 360.0
+    return a
+
+
+_DIR_SECTORS = [
+    (30, "正对目标"), (60, "目标右前方"), (120, "目标右侧"), (150, "目标右后方"),
+    (210, "目标后方"), (240, "目标左后方"), (300, "目标左侧"), (330, "目标左前方"),
+    (360, "正对目标"),
+]
+
+
+def _dir_word(az):
+    az = _wrap_deg(az)
+    for limit, word in _DIR_SECTORS:
+        if az < limit:
+            return word
+    return "正对目标"
+
+
+def _shot_size(dist, fov):
+    fov = float(fov or 40)
+    dist = float(dist or 2)
+    # 水平可见高度近似 = 2*dist*tan(fov/2)，据此推断景别
+    h = 2 * dist * _layout_math.tan(_layout_math.radians(fov / 2))
+    if h <= 1.2:
+        return "特写"
+    if h <= 2.0:
+        return "近景"
+    if h <= 3.5:
+        return "中景"
+    if h <= 6.0:
+        return "中全景"
+    return "全景"
+
+
+def _elev_word(el):
+    el = float(el or 0)
+    if el >= 12:
+        return "高位俯拍"
+    if el <= -12:
+        return "低位仰拍"
+    return "平视"
+
+
+def _vec3(v):
+    v = v or []
+    if len(v) >= 3:
+        try:
+            return [float(v[0]), float(v[1]), float(v[2])]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _sub(a, b):
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _norm(a):
+    n = _layout_math.sqrt(_dot(a, a))
+    return a if n == 0 else [x / n for x in a]
+
+
+def _project_side(entry_pos, camera_pos, forward):
+    """返回 (深度档位, 左右) —— 把一点投影到摄像机画面：>0 偏右，<0 偏左。"""
+    if camera_pos is None or entry_pos is None:
+        return (None, None)
+    forward = _norm(list(forward or [0, 0, -1]))
+    up = [0, 1, 0]
+    # 投影到水平面避免 y 轴倾斜干扰"左右"
+    right = _cross(forward, up)
+    if _length(right) < 1e-6:
+        right = [1, 0, 0]
+    right = _norm(right)
+    forward_h = _norm([forward[0], 0, forward[2]] or forward)
+    dv = _sub(entry_pos, camera_pos)
+    depth = _dot(dv, forward_h)
+    lateral = _dot(dv, right)
+    if depth <= 0:
+        return ("后方", None)
+    lateral = lateral / max(abs(depth), 1e-6)
+    if abs(lateral) < 0.35:
+        side = "中间偏"
+        side += "右" if lateral > 0 else "左"
+    else:
+        side = "右侧" if lateral > 0 else "左侧"
+    return (depth, side)
+
+
+def _cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
+def _length(a):
+    return _layout_math.sqrt(_dot(a, a))
+
+
+def _compose_camera_prose(cam):
+    """单机位 → 机位段文字（与前端 composeCameraProseJs 逐字一致）。"""
+    if not isinstance(cam, dict):
+        return ""
+    az = cam.get("azimuth")
+    if az is None:
+        return ""
+    target_name = str(cam.get("target") or "").strip() or "画面中心"
+    dist = float(cam.get("distance") or 2)
+    parts = [f"摄像机位于{target_name}" + _dir_word(az),
+             _elev_word(cam.get("elevation")),
+             f"距离≈{round(dist, 1)}m",
+             f"视场≈{round(float(cam.get('fov') or 40))}°（{_shot_size(dist, cam.get('fov'))}）"]
+    if cam.get("free") and cam.get("view_azimuth") is not None:
+        parts.append(f"镜头朝向{_dir_word(cam.get('view_azimuth'))}，俯仰{round(float(cam.get('view_elevation') or 0))}°")
+    else:
+        parts.append(f"望向{target_name}")
+    return "〔机位〕" + "，".join(parts) + "。"
+
+
+def _layout_cameras(layout):
+    """从 layout JSON 读机位数组（兼容旧单 camera → [camera]）。"""
+    try:
+        data = json.loads(layout or "{}")
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    if isinstance(data.get("cameras"), list) and data["cameras"]:
+        return data["cameras"]
+    legacy = data.get("camera")
+    return [legacy] if isinstance(legacy, dict) and legacy else []
+
+
+def _compose_layout_prose(layout):
+    """布局 JSON → 空间关系文字；无有效内容返回空串。
+
+    布局结构（与前端 JS 一致）：
+      {"file","camera":{"pos":[x,y,z],"target_pos":[x,y,z],"azimuth","elevation",
+                         "distance","fov","target"},
+       "actors":[{"name","color","pos","rotY","pose","scale"}],
+       "props":[{"name","color","type","pos","rotY","size"}],"activeCamera"}
+    """
+    try:
+        data = json.loads(layout or "{}")
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    cams = None
+    if isinstance(data.get("cameras"), list) and data.get("cameras"):
+        cams = data["cameras"]
+    else:
+        legacy = data.get("camera")
+        cams = [legacy] if isinstance(legacy, dict) and legacy else []
+    active_selected = str(data.get("activeCamera") or "").strip()
+    cam = next((c for c in cams if isinstance(c, dict) and str(c.get("name", "")) == active_selected), cams[0] if cams else {})
+    if not isinstance(cam, dict):
+        cam = {}
+    actors = [a for a in (data.get("actors") or []) if isinstance(a, dict) and a.get("name")]
+    props = [p for p in (data.get("props") or []) if isinstance(p, dict) and p.get("name")]
+    if not cam and not actors and not props:
+        return ""
+
+    target_name = str(cam.get("target") or "").strip() or "画面中心"
+    cam_pos = _vec3(cam.get("pos"))
+    target_pos = _vec3(cam.get("target_pos"))
+    forward = None
+    if cam_pos is not None and target_pos is not None:
+        forward = _sub(target_pos, cam_pos)
+
+    segs = []
+    # ── 机位段 ──
+    cam_line = _compose_camera_prose(cam)
+    if cam_line:
+        segs.append(cam_line)
+
+    # ── 站位段 ──
+    stage_parts = []
+    for a in actors:
+        name = str(a.get("name"))
+        pose = str(a.get("pose") or "").strip()
+        depth, side = _project_side(_vec3(a.get("pos")), cam_pos, forward)
+        loc = ""
+        if side:
+            if depth == "后方":
+                loc = "在画面" + side + "后方"
+            else:
+                plane = "前景" if depth is not None and depth < 1.0 else (
+                    "中景" if depth is not None and depth < 2.5 else "背景")
+                loc = f"{side}画面{plane}"
+        desc = name
+        if loc:
+            desc += f"（{loc}）"
+        if pose and pose != "站立":
+            desc += f" 呈{pose}姿势"
+        stage_parts.append(desc)
+    for p in props:
+        name = str(p.get("name"))
+        depth, side = _project_side(_vec3(p.get("pos")), cam_pos, forward)
+        loc = ""
+        if side:
+            plane = "前景" if depth is not None and depth < 1.0 else (
+                "中景" if depth is not None and depth < 2.5 else "背景")
+            loc = f"{side}画面{plane}"
+        stage_parts.append(f"{name}（{loc}）" if loc else name)
+    if stage_parts:
+        segs.append("〔站位〕" + "；".join(stage_parts) + "。")
+
+    # 空间：有墙体 → 提示室内围合
+    if any(isinstance(w, dict) and w.get("name") for w in (data.get("walls") or [])):
+        segs.append("〔空间〕四周由墙体围合，构成室内空间。")
+
+    # 视线轴：前两个可见人物
+    kept = [a.get("name") for a in actors[:2] if a.get("name")]
+    if len(kept) >= 2:
+        segs.append(f"〔视线轴〕{kept[0]}→{kept[1]}。")
+
+    if not segs:
+        return ""
+    return "空间关系（白模预视觉化）：" + " ".join(segs)
 
 
 def _referenced_indexes(text):
@@ -414,6 +703,70 @@ def _load_audio(rel_path):
     return {"waveform": waveform.unsqueeze(0), "sample_rate": sr}
 
 
+def _parse_ref_tray(ref_tray):
+    """解析前端参考素材托盘 JSON → [{type(file/image/audio), file, kind, name}, ...]。"""
+    try:
+        data = json.loads(ref_tray or "[]")
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return []
+    out = []
+    for it in data:
+        if not isinstance(it, dict):
+            continue
+        typ = str(it.get("type", "")).lower()
+        f = str(it.get("file", "") or "").strip()
+        if typ not in ("image", "video", "audio") or not f:
+            continue
+        out.append({"type": typ, "file": f,
+                    "kind": str(it.get("kind", "") or "").strip(),
+                    "name": str(it.get("name", "") or "").strip()})
+    return out
+
+
+def _load_tray_video(rel_path, max_frames=128):
+    """视频文件（input 相对路径）→ IMAGE 帧张量 [N,H,W,C]，PyAV 解码、均匀抽样降密度。"""
+    import folder_paths
+    import numpy as np
+    import torch
+    import av
+    abs_path = os.path.join(folder_paths.get_input_directory(), rel_path)
+    if not os.path.isfile(abs_path):
+        raise ValueError(f"托盘视频不存在：{rel_path}（{abs_path}）")
+    container = av.open(abs_path)
+    stream = container.streams.video[0]
+    frames = []
+    for frame in container.decode(stream):
+        frames.append(frame.to_ndarray(format="rgb24"))
+        if len(frames) >= max_frames:
+            break
+    if not frames:
+        raise ValueError(f"托盘视频解码不到帧：{rel_path}")
+    n = len(frames)
+    arr = np.stack(frames).astype(np.float32) / 255.0   # N,H,W,3
+    return torch.from_numpy(arr)
+
+
+def _inject_tray(ref_images, ref_videos, ref_audios, tray):
+    """把托盘素材加载进 ref 字典（内部读取，无需外接端口）；返回 (img, vid, aud) 数量。"""
+    img = vid = aud = 0
+    for e in tray:
+        t, f = e["type"], e["file"]
+        if t == "image":
+            ref_images[f"tray_img_{img}"] = _load_image(f)
+            img += 1
+        elif t == "video":
+            ref_videos[f"tray_vid_{vid}"] = _load_tray_video(f)
+            vid += 1
+        elif t == "audio":
+            ref_audios[f"tray_aud_{aud}"] = _load_audio(f)
+            aud += 1
+    return img, vid, aud
+
+
 def _inject_library(ref_images, ref_audios, img_order, aud_order, entries):
     """把被引用的素材库媒体 load 进 ref_images/ref_audios（保持编号顺序）。"""
     for idx, kind in img_order:
@@ -443,7 +796,7 @@ def _expand_char_tags(text, char_pic):
 
 
 def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio, library, pic_of, aud_of,
-                      dialogue_convert=True):
+                      dialogue_convert=True, layout="{}"):
     """导演台：分镜拼成 CUT/TRANSITION + 对白 + 角色人物参考 + 音效/配乐 + 总时长。
 
     数据结构：
@@ -521,9 +874,17 @@ def _compose_director(shots_json, counts, image_slots, audio_slots, paired_audio
                                             library, pic_of, aud_of)
         lib_annos.extend(a)
         shot_text = expand_at_tags(shot_text, counts)
-        # 跨镜一致性约束：从第二镜起补一句保持角色/场景/服装一致
+        # 该镜机位（来自布局 cameras，按 shot.camera 匹配）
+        _cam = next((c for c in _layout_cameras(layout)
+                     if isinstance(c, dict) and str(c.get("name", "")) == str(shot.get("camera", ""))), None)
+        _cam_line = _compose_camera_prose(_cam)
+        if _cam_line:
+            shot_text = _cam_line + "\n" + shot_text
+        # 跨镜一致性约束：从第二镜起补一句保持角色/场景/服装一致 + 逐镜一致性清单
         if i > 0 and consistent:
             shot_text += "\n保持与上一镜相同的角色、场景、服装与光线。"
+            if str(shot.get("continuity") or "").strip():
+                shot_text += "\n保持与上一镜一致：" + str(shot.get("continuity")).strip() + "。"
         # 对白：身份描述（可空）+ (Sx) + <d>[语言] 原文</d>
         for d in shot.get("dialogue") or []:
             if not isinstance(d, dict):
@@ -567,10 +928,12 @@ class ZoeyMiniMaxH3ReferenceToVideo:
     @classmethod
     def INPUT_TYPES(cls):
         import folder_paths
+        import comfy.samplers
         loras = [_NONE] + folder_paths.get_filename_list("loras")
         optional = {}
         for i in range(_IMAGE_SLOTS):
             optional[f"ref_image_{i}"] = ("IMAGE",)
+        optional["negative"] = ("CONDITIONING", {"tooltip": "长视频分段采样用的负向条件；接一个空/负面 ClipTextEncode"})
         for i in range(_VIDEO_SLOTS):
             optional[f"ref_video_{i}"] = ("IMAGE",)
             optional[f"ref_video_audio_{i}"] = ("AUDIO",)
@@ -643,29 +1006,79 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "placeholder": '[{"lora":"名字.safetensors","model":1.0,"clip":1.0}]',
                     "tooltip": "LoRA 列表（前端渲染；每个条目含 lora 文件名 + model/clip 强度）。",
                 }),
+                "layout": ("STRING", {
+                    "multiline": True,
+                    "default": "{}",
+                    "placeholder": "3D 白模导演台布局数据（前端渲染；含机位/人物/物体 + 导出的预视觉化截图）",
+                    "tooltip": "3D 白模导演台：摆人物姿势/物体/机位 → 导出布局截图作构图参考 + 生成空间关系文字。",
+                }),
+                "layout_enabled": ("BOOLEAN", {
+                    "default": True,
+                    "label_on": "启用",
+                    "label_off": "关闭",
+                    "tooltip": "是否让 3D 白模布局参与生成：关闭=不注入布局构图参考图与空间关系文字，逐镜机位也失效。",
+                }),
+                # 追加在末尾：不动上方已有控件的索引，避免旧工作流 widgets_values 错位
+                "tray": ("STRING", {
+                    "multiline": True,
+                    "default": "[]",
+                    "placeholder": '[{"type":"image","file":"a.png","kind":"character","name":"主图"}]',
+                    "tooltip": "参考素材托盘：节点内部按 input 相对路径读取图片/音频/视频，替代外接端口（前端渲染，@P1/@V1/@A1 引用托盘顺序）。",
+                }),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
+                "steps": ("INT", {"default": 25, "min": 1, "max": 200}),
+                "cfg": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 20.0, "step": 0.1}),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "res_multistep"}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple"}),
+                # ── 最后N步注入LoRA（两段采样，追加在末尾） ──
+                "last_lora_name": (loras, {"default": _NONE, "tooltip": "只在最后 N 步注入的 LoRA（如皮肤质感）；无=不启用两段"}),
+                "last_lora_strength": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+                "last_lora_clip": ("FLOAT", {"default": 0.0, "min": -20.0, "max": 20.0, "step": 0.01, "tooltip": "该 LoRA 的 CLIP 强度；纹理/皮肤 LoRA 一般 0"}),
+                "last_steps": ("INT", {"default": 0, "min": 0, "max": 200, "tooltip": "最后多少步改用合成该LoRA的模型采样；0=不启用"}),
             },
             "optional": optional,
         }
 
-    RETURN_TYPES = ("MODEL", "VAE", "VAE", "CONDITIONING", "LATENT", "STRING")
-    RETURN_NAMES = ("model", "vae", "audio_vae", "positive", "LATENT", "提示词(已转换)")
+    RETURN_TYPES = ("MODEL", "VAE", "VAE", "CLIP", "CONDITIONING", "LATENT", "STRING", "IMAGE", "AUDIO", "STRING")
+    RETURN_NAMES = ("model", "vae", "audio_vae", "clip", "positive", "LATENT", "提示词(已转换)", "视频帧", "音频", "设置")
     FUNCTION = "process"
     CATEGORY = "Zoey Tool/MiniMax H3"
+    OUTPUT_NODE = True  # 输出节点：即使单独跑（靠"保存mp4"出片）也会被 ComfyUI 执行，否则报 Prompt has no outputs
 
     def process(self, unet_name, clip_name, vae_name, audio_vae_name,
                 lora_list, loras,
                 prompt, mode, resolution, aspect, duration,
                 ref_image_size, auto_declaration, director_mode, director_shots,
-                library="", sage_attention=False,
-                dialogue_convert=True, ref_purposes="{}", **refs):
+                library="", tray="[]", sage_attention=False,
+                dialogue_convert=True, ref_purposes="{}", layout="{}", layout_enabled=True,
+                negative=None, seed=0, steps=25,
+                cfg=4.0, sampler_name="res_multistep", scheduler="simple",
+                last_lora_name=_NONE, last_lora_strength=1.0, last_lora_clip=0.0, last_steps=0, **refs):
         # ── 内置模型加载：UNet + CLIP + VAE + 音频 VAE，再叠 LoRA ──
         model = _load_unet(unet_name)
         clip = _load_clip(clip_name)
         vae = _load_vae(vae_name)
         audio_vae = _load_vae(audio_vae_name) if audio_vae_name and audio_vae_name != _NONE else None
-        for lora_name, lora_model, lora_clip in _parse_loras(loras):
+        parsed_loras = _parse_loras(loras)
+        for lora_name, lora_model, lora_clip in parsed_loras:
             model, clip = _apply_lora(model, clip, lora_name, lora_model, lora_clip)
 
+        return self._segment(
+            model, clip, vae, audio_vae,
+            prompt, mode, resolution, aspect, duration, ref_image_size,
+            auto_declaration, director_mode, director_shots, library, tray,
+            sage_attention, dialogue_convert, ref_purposes, layout, layout_enabled,
+            negative, seed, steps, cfg, sampler_name, scheduler,
+            last_lora_name, last_lora_strength, last_lora_clip, last_steps, **refs)
+
+    def _segment(self, model, clip, vae, audio_vae, prompt, mode, resolution, aspect, duration,
+                 ref_image_size, auto_declaration, director_mode, director_shots, library="",
+                 tray="[]", sage_attention=False, dialogue_convert=True, ref_purposes="{}",
+                 layout="{}", layout_enabled=True, negative=None, seed=0, steps=25,
+                 cfg=4.0, sampler_name="res_multistep", scheduler="simple",
+                 last_lora_name=_NONE, last_lora_strength=1.0, last_lora_clip=0.0, last_steps=0,
+                 composed_prompt=None, width_override=None, height_override=None, **refs):
+        # 用已加载的 model/clip/vae 做单段生成（不重复加载）：process 与长视频节点都调这里
         ref_images = {}
         for i in range(_IMAGE_SLOTS):
             ref_images[f"ref_image_{i}"] = refs.get(f"ref_image_{i}")
@@ -680,17 +1093,49 @@ class ZoeyMiniMaxH3ReferenceToVideo:
         for i in range(_AUDIO_SLOTS):
             ref_audios[f"ref_audio_{i}"] = refs.get(f"ref_audio_{i}")
 
+        # 参考素材托盘：节点内部按路径读取图片/视频/音频（替代/叠加外接端口）
+        tray_entries = _parse_ref_tray(tray)
+        tray_img, tray_vid, tray_aud = _inject_tray(ref_images, ref_videos, ref_audios, tray_entries)
+
+        port_img = sum(1 for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
+        port_vid = sum(1 for i in range(_VIDEO_SLOTS) if refs.get(f"ref_video_{i}") is not None)
+        port_vid_aud = sum(1 for i in range(_VIDEO_SLOTS) if refs.get(f"ref_video_audio_{i}") is not None)
+        port_aud = sum(1 for i in range(_AUDIO_SLOTS) if refs.get(f"ref_audio_{i}") is not None)
+
         counts = count_refs(
-            image_count=sum(1 for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None),
-            video_count=sum(1 for i in range(_VIDEO_SLOTS) if refs.get(f"ref_video_{i}") is not None),
-            video_audio_count=sum(1 for i in range(_VIDEO_SLOTS) if refs.get(f"ref_video_audio_{i}") is not None),
-            audio_count=sum(1 for i in range(_AUDIO_SLOTS) if refs.get(f"ref_audio_{i}") is not None),
+            image_count=port_img + tray_img,
+            video_count=port_vid + tray_vid,
+            video_audio_count=port_vid_aud,
+            audio_count=port_aud + tray_aud,
         )
 
-        image_slots = sorted(i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
+        # 长视频末帧续接：把上一段末帧注入为参考图（不计 @P，纯衔接）
+        prev_frame = refs.get("prev_frame")
+        prev_line = ""
+        if prev_frame is not None:
+            ref_images["prev_frame"] = prev_frame
+            prev_line = "保持与上一镜相同的角色、场景、服装与光线（以上一镜尾帧为续接参考）。"
+        image_slots = [i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None]
+        image_slots += list(range(_IMAGE_SLOTS, _IMAGE_SLOTS + tray_img))
         has_video = any(v is not None for v in ref_videos.values())
         has_audio = any(a is not None for a in ref_audios.values()) \
             or any(a is not None for a in ref_video_audios.values())
+
+        # 托盘图片的用途（人物/场景/风格…）并入 ref_purposes，供 _build_purpose_lines 生成标注行
+        if any((e["type"] == "image" and e.get("kind")) for e in tray_entries):
+            try:
+                merged_purposes = json.loads(ref_purposes or "{}")
+            except Exception:
+                merged_purposes = {}
+            if not isinstance(merged_purposes, dict):
+                merged_purposes = {}
+            ti = 0
+            for e in tray_entries:
+                if e["type"] == "image":
+                    if e.get("kind"):
+                        merged_purposes[str(_IMAGE_SLOTS + ti)] = e["kind"]
+                    ti += 1
+            ref_purposes = json.dumps(merged_purposes, ensure_ascii=False)
 
         # 引号台词自动转 <d>[语种] 内容</d>（覆盖非导演台的原始 prompt）
         if dialogue_convert:
@@ -708,30 +1153,81 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             else:
                 eff = "T2V"
 
-        width, height = _compute_canvas(ref_images, resolution, aspect)
+        _cw, _ch = _compute_canvas(ref_images, resolution, aspect)
+        width = width_override or _cw
+        height = height_override or _ch
 
         if eff in ("T2V", "I2V"):
             # I2V：第一张已连接参考图作首帧；≥2 张时最后一张作尾帧（首尾帧）
-            first_frame = ref_images[f"ref_image_{image_slots[0]}"] if (eff == "I2V" and image_slots) else None
-            last_frame = ref_images[f"ref_image_{image_slots[-1]}"] if (eff == "I2V" and len(image_slots) >= 2) else None
+            def _slot_img(slot):
+                return ref_images.get(f"ref_image_{slot}") if slot < _IMAGE_SLOTS else ref_images.get(f"tray_img_{slot - _IMAGE_SLOTS}")
+            first_frame = _slot_img(image_slots[0]) if (eff == "I2V" and image_slots) else None
+            last_frame = _slot_img(image_slots[-1]) if (eff == "I2V" and len(image_slots) >= 2) else None
             cond, latent, prompt_text = self._run_text_image(
                 clip, vae, prompt, width, height, duration,
                 director_mode, director_shots, eff == "I2V",
-                first_frame, dialogue_convert, last_frame)
+                first_frame, dialogue_convert, last_frame,
+                (layout if layout_enabled else ""), layout_enabled, composed_prompt)
         else:
             cond, latent, prompt_text = self._run_ref2va(
                 clip, vae, audio_vae, prompt, ref_images, ref_videos,
                 ref_video_audios, ref_audios, counts, width, height,
                 duration, ref_image_size, auto_declaration, director_mode,
                 director_shots, library, image_slots, dialogue_convert,
-                ref_purposes)
+                ref_purposes, (layout if layout_enabled else ""), layout_enabled,
+                composed_prompt)
+
+        if prev_line and prompt_text:
+            prompt_text = prompt_text + "\n" + prev_line
+
+        settings = json.dumps({
+            "steps": int(steps), "cfg": float(cfg),
+            "sampler_name": sampler_name, "scheduler": scheduler,
+            "seed": int(seed),
+        }, ensure_ascii=False)
 
         # 集成 SageAttention：在模型克隆上启用，随 CONDITIONING/LATENT 一并返回
         if sage_attention:
             model = _apply_sage_attention(model)
-        return (model, vae, audio_vae, cond, latent, prompt_text)
 
-    def _compose_plain_director(self, shots_json, dialogue_convert=True):
+        # 最后N步注入LoRA（两段采样）：设置后节点自己采样，走 base→合成LoRA 续跑，输出画面
+        if last_steps > 0 and last_lora_name != _NONE:
+            import nodes as _nodes
+            if negative is None:
+                negative = clip.encode_from_tokens_scheduled(clip.tokenize(""))
+            out_latent, two_info = ZoeyMiniMaxH3LastStepsLora().process(
+                model, cond, negative, latent, last_lora_name, last_lora_strength, last_lora_clip,
+                seed, steps, last_steps, cfg, sampler_name, scheduler)
+            # 完整 AV 嵌套 latent 直接给 VAEDecode/VAEDecodeAudio，由它们按 VAE 拆流解码（不再拆 tensors[0]）
+            frames = _nodes.VAEDecode().decode(vae, {"samples": out_latent["samples"]})[0]
+            audio = None
+            if audio_vae is not None:
+                from comfy_extras.nodes_audio import VAEDecodeAudio
+                audio = VAEDecodeAudio().decode(audio_vae, {"samples": out_latent["samples"]})[0]
+            return (model, vae, audio_vae, clip, cond, out_latent,
+                    (prompt_text or "") + " ｜ " + two_info, frames, audio, settings)
+
+        # 未启用两段(low last_steps/无 last_lora)时也做单段采样，让输出节点总能出片
+        import comfy.sample as _cs
+        import nodes as _n3
+        if negative is None:
+            negative = clip.encode_from_tokens_scheduled(clip.tokenize(""))
+        latent_image = latent["samples"]
+        latent_image = _cs.fix_empty_latent_channels(model, latent_image, latent.get("downscale_ratio_spacial", None), latent.get("downscale_ratio_temporal", None))
+        batch_inds = latent["batch_index"] if "batch_index" in latent else None
+        noise = _cs.prepare_noise(latent_image, seed, batch_inds)
+        import latent_preview
+        samples = _cs.sample(model, noise, steps, cfg, sampler_name, scheduler, cond, negative, latent_image,
+                             denoise=1.0, force_full_denoise=True, noise_mask=latent.get("noise_mask"),
+                             callback=latent_preview.prepare_callback(model, steps), seed=seed)
+        frames = _n3.VAEDecode().decode(vae, {"samples": samples})[0]
+        audio = None
+        if audio_vae is not None:
+            from comfy_extras.nodes_audio import VAEDecodeAudio
+            audio = VAEDecodeAudio().decode(audio_vae, {"samples": samples})[0]
+        return (model, vae, audio_vae, clip, cond, latent, prompt_text, frames, audio, settings)
+
+    def _compose_plain_director(self, shots_json, dialogue_convert=True, layout="{}"):
         """T2V/I2V 分镜组合：只拼 CUT/TRANSITION/对白/音效/配乐，不做 @ 引用展开。"""
         try:
             data = json.loads(shots_json or "{}")
@@ -763,8 +1259,16 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             shot_text = str(shot.get("prompt", "")).strip()
             if dialogue_convert:
                 shot_text = _convert_quoted_dialogue(shot_text)
+            # 该镜机位（来自布局 cameras，按 shot.camera 匹配）
+            _cam = next((c for c in _layout_cameras(layout)
+                         if isinstance(c, dict) and str(c.get("name", "")) == str(shot.get("camera", ""))), None)
+            _cam_line = _compose_camera_prose(_cam)
+            if _cam_line:
+                shot_text = _cam_line + "\n" + shot_text
             if i > 0 and consistent:
                 shot_text += "\n保持与上一镜相同的角色、场景、服装与光线。"
+                if str(shot.get("continuity") or "").strip():
+                    shot_text += "\n保持与上一镜一致：" + str(shot.get("continuity")).strip() + "。"
             for d in shot.get("dialogue") or []:
                 if not isinstance(d, dict):
                     continue
@@ -797,14 +1301,22 @@ class ZoeyMiniMaxH3ReferenceToVideo:
 
     def _run_text_image(self, clip, vae, prompt, width, height, duration,
                         director_mode, director_shots, use_first_frame, first_frame,
-                        dialogue_convert=True, last_frame=None):
+                        dialogue_convert=True, last_frame=None, layout="{}", layout_enabled=True,
+                        composed_prompt=None):
         """T2V / I2V：走官方 MiniMaxH3ImageToVideo，不做 @ 引用展开。"""
-        if director_mode:
-            prompt_text, total = self._compose_plain_director(director_shots, dialogue_convert)
+        if composed_prompt is not None:
+            prompt_text = composed_prompt
+            length = _frame_count(duration)
+        elif director_mode:
+            prompt_text, total = self._compose_plain_director(director_shots, dialogue_convert, layout)
             length = _frame_count(total)
         else:
             prompt_text = (prompt or "").strip()
             length = _frame_count(duration)
+        # 布局空间关系文字（纯文字，T2V/I2V 不注入预视觉化图）
+        layout_prose = _compose_layout_prose(layout)
+        if layout_prose:
+            prompt_text = layout_prose + "\n" + prompt_text
         outputs = MiniMaxH3ImageToVideo.execute(
             clip, vae, prompt_text, width, height, length,
             first_frame=first_frame if use_first_frame else None,
@@ -815,7 +1327,19 @@ class ZoeyMiniMaxH3ReferenceToVideo:
     def _run_ref2va(self, clip, vae, audio_vae, prompt, ref_images, ref_videos,
                     ref_video_audios, ref_audios, counts, width, height, duration,
                     ref_image_size, auto_declaration, director_mode, director_shots,
-                    library, image_slots, dialogue_convert=True, ref_purposes="{}"):
+                    library, image_slots, dialogue_convert=True, ref_purposes="{}",
+                    layout="{}", layout_enabled=True, composed_prompt=None):
+        # 长视频续接：主节点已组合好提示词，这里直接复用（跳过二次 @ 展开/用途/布局注入）
+        if composed_prompt is not None:
+            prompt_text = composed_prompt
+            length = _frame_count(duration)
+            if audio_vae is None and (any(v is not None for v in ref_video_audios.values())
+                                      or any(a is not None for a in ref_audios.values())):
+                raise ValueError("参考模式引用了音频素材，请选择 audio_vae_name")
+            outputs = MiniMaxH3ReferenceToVideo.execute(
+                clip, vae, audio_vae, prompt_text, width, height, length,
+                ref_image_size, ref_images, ref_videos, ref_video_audios, ref_audios)
+            return (outputs.args[0], outputs.args[1], prompt_text)
         # 永久全局素材库：从磁盘读清单，仅对提示词里 @L 引用的条目注入媒体
         library = _load_global_library()
         audio_slots = sorted(i for i in range(_AUDIO_SLOTS) if ref_audios.get(f"ref_audio_{i}") is not None)
@@ -832,7 +1356,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                 library, referenced, image_slots, paired_audio, audio_slots)
             composed, total_duration, has_user_decl = _compose_director(
                 director_shots, counts, image_slots, audio_slots, paired_audio, library,
-                pic_of, aud_of, dialogue_convert)
+                pic_of, aud_of, dialogue_convert, layout)
             if not has_user_decl and auto_declaration:
                 declaration = build_declaration(counts)
                 if declaration:
@@ -861,6 +1385,30 @@ class ZoeyMiniMaxH3ReferenceToVideo:
 
         if img_order or aud_order:
             _inject_library(ref_images, ref_audios, img_order, aud_order, library)
+
+        # 3D 白模导演台：布局预视觉化截图作构图参考（排所有图之后）+ 空间关系文字到顶部
+        layout_data = None
+        try:
+            _ls = (layout or "").strip()
+            layout_data = json.loads(_ls) if _ls and _ls != "{}" else None
+        except Exception:
+            layout_data = None
+        layout_prose = _compose_layout_prose(layout)
+        layout_pic = len(image_slots) + len(img_order) + 1
+        layout_screen = ""
+        if isinstance(layout_data, dict) and layout_data.get("file"):
+            try:
+                ref_images[f"layout_img_0"] = _load_image(f"zoey_layout/{layout_data['file']}")
+                layout_screen = f"<Picture {layout_pic}> 是站位机位参考图（人物站位与摄像机方位）"
+            except Exception:
+                layout_screen = ""
+        layout_prepend = []
+        if layout_prose:
+            layout_prepend.append(layout_prose)
+        if layout_screen:
+            layout_prepend.append(layout_screen)
+        if layout_prepend:
+            prompt_text = "\n".join(layout_prepend) + "\n" + prompt_text
 
         if audio_vae is None and (paired_audio or any(a is not None for a in ref_audios.values())):
             raise ValueError("参考模式引用了音频素材，请选择 audio_vae_name")
@@ -932,6 +1480,290 @@ class ZoeyStylePrompt:
                 p = p.replace(key, val)
         return (p, style)
 
+class ZoeyMiniMaxH3LastStepsLora:
+    """同轨迹两段采样：前段用基座模型（贴合参考），最后 few 步切到合成皮肤/质感 LoRA 的模型续跑。
+
+    解决"全程叠 LoRA 会带偏参考、但纯基座又缺皮肤质感"的矛盾。
+    关键：H3 是 FLOW 模型（`class ModelSampling(ModelSamplingAV, CONST)`，
+    noise_scaling = σ*noise + (1-σ)*latent，inverse = latent/(1-σ)）。
+    因此可做**真正不重加噪的同轨迹续采**：
+      段1：基座跑 0..split（停在 σ_split）→ 输出 = x_t/(1-σ)；
+      恢复 x_t = 输出*(1-σ)；
+      段2：把噪声和 latent_image 都设为 x_t 喂回 → noise_scaling(σ,x_t,x_t)=x_t（恒等，不重加噪），
+      合成 LoRA 模型接着 x_t 续跑到末步。→ 同一轨迹，只在最后 N 步换模型，无整帧重渲、无色块。
+    之前基于 comfy.hooks 的关键帧调度会强制 DiT 在文本编码期驻留显存而爆 OOM，此实现改走 merge（add_patches），
+    彻底绕开那个问题。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        import folder_paths
+        import comfy.samplers
+        loras = [_NONE] + folder_paths.get_filename_list("loras")
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "来自 ZoeyMiniMaxH3ReferenceToVideo 的 model（已含基础 LoRA，不含皮肤/质感 LoRA）"}),
+                "positive": ("CONDITIONING", {"tooltip": "来自参考节点的 positive"}),
+                "negative": ("CONDITIONING", {"tooltip": "负向条件；接一个空/负面 ClipTextEncode"}),
+                "latent": ("LATENT", {"tooltip": "来自参考节点的 LATENT"}),
+                "lora_name": (loras, {"tooltip": "只在最后 N 步注入的 LoRA（如皮肤质感）"}),
+                "lora_strength": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01, "tooltip": "该 LoRA 的模型强度"}),
+                "lora_clip": ("FLOAT", {"default": 0.0, "min": -20.0, "max": 20.0, "step": 0.01, "tooltip": "该 LoRA 的 CLIP 强度；纹理/皮肤 LoRA 一般 0"}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
+                "steps": ("INT", {"default": 25, "min": 1, "max": 200}),
+                "last_steps": ("INT", {"default": 5, "min": 1, "max": 200, "tooltip": "最后多少步改用「合成该 LoRA」的模型采样（皮肤/质感在收尾注入）"}),
+                "cfg": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 20.0, "step": 0.1}),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "res_multistep"}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple"}),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT", "STRING")
+    RETURN_NAMES = ("LATENT", "分段信息")
+    FUNCTION = "process"
+    CATEGORY = "Zoey Tool/MiniMax H3"
+
+    def process(self, model, positive, negative, latent, lora_name, lora_strength,
+                lora_clip, seed, steps, last_steps, cfg, sampler_name, scheduler):
+        import comfy.sample
+        import comfy.samplers
+
+        # 后段模型 = 基座 + 该 LoRA；前段 = 基座
+        model_lora, _ = _apply_lora(model, None, lora_name, lora_strength, lora_clip)
+
+        latent_image = latent["samples"]
+        latent_image = comfy.sample.fix_empty_latent_channels(
+            model, latent_image, latent.get("downscale_ratio_spacial", None),
+            latent.get("downscale_ratio_temporal", None))
+        batch_inds = latent["batch_index"] if "batch_index" in latent else None
+        noise0 = comfy.sample.prepare_noise(latent_image, seed, batch_inds)
+
+        if last_steps <= 0:
+            samples = comfy.sample.sample(
+                model, noise0, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
+                denoise=1.0, force_full_denoise=True, noise_mask=latent.get("noise_mask"), seed=seed)
+            out = latent.copy()
+            out.pop("downscale_ratio_spacial", None)
+            out.pop("downscale_ratio_temporal", None)
+            out["samples"] = samples
+            return (out, f"全程基座采样：{steps} 步")
+
+        device = model.load_device
+        ms = model.get_model_object("model_sampling")
+        sigmas = comfy.samplers.calculate_sigmas(ms, scheduler, steps).to(device)
+        split = max(1, min(steps, steps - last_steps))
+        sigmas1 = sigmas[:split + 1]
+        sigmas2 = sigmas[split:]
+        sampler = comfy.samplers.ksampler(sampler_name)
+        # 实时预览（AV 嵌套 latent 会取视频流 tensors[0] 解码）
+        import latent_preview
+        callback = latent_preview.prepare_callback(model, steps)
+
+        # 段1：基座跑 0..split（停在 sigma[split]，未全去噪）
+        pass1 = comfy.sample.sample_custom(
+            model, noise0, cfg, sampler, sigmas1, positive, negative, latent_image,
+            callback=callback, seed=seed)
+        # CONST flow: sample 输出 = inverse_noise_scaling(σ, x) = x/(1-σ)，恢复原始 x_t
+        sigma_split = float(sigmas1[-1])
+        x_t = pass1 * (1.0 - sigma_split)
+
+        # 段2：合成 LoRA 模型，从 x_t 续跑 sigmas2。noise=latent=x_t →
+        # noise_scaling(σ,x_t,x_t)=σ*x_t+(1-σ)*x_t=x_t（恒等，不重加噪），真正同轨迹续采。
+        pass2 = comfy.sample.sample_custom(
+            model_lora, x_t, cfg, sampler, sigmas2, positive, negative, x_t,
+            callback=callback, seed=seed)
+
+        out = latent.copy()
+        out.pop("downscale_ratio_spacial", None)
+        out.pop("downscale_ratio_temporal", None)
+        out["samples"] = pass2
+        info = (f"同轨迹两段：基座 0~{split}步 → 合成LoRA {split}~{steps}步"
+                f"（最后{last_steps}步）注入 {lora_name}")
+        return (out, info)
+
+
+class ZoeyMiniMaxH3Ref2VA_LastSteps:
+    """自包含版「参考转视频 + 最后 N 步注入 LoRA」两段采样节点。
+
+    内部复用 ZoeyMiniMaxH3ReferenceToVideo 生成参考条件与 AC/AV latent，
+    再走「基座整段 → LoRA 精修」：段1 基座去噪→贴合参考/运镜；段2 合成皮肤 LoRA 模型做
+    denoise<1 精修→收尾注入质感。一个节点搞定：直接出视频帧。未选 last_lora 时等价于全程基座参考转视频。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        import folder_paths
+        import comfy.samplers
+        base = ZoeyMiniMaxH3ReferenceToVideo.INPUT_TYPES()
+        loras = [_NONE] + folder_paths.get_filename_list("loras")
+        base["required"].update({
+            "negative": ("CONDITIONING", {"tooltip": "负向条件；接一个空/负面 ClipTextEncode"}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
+            "steps": ("INT", {"default": 25, "min": 1, "max": 200}),
+            "last_steps": ("INT", {"default": 5, "min": 0, "max": 200, "tooltip": "最后多少步改用「合成该LoRA」的模型采样；0=全程基座（等价普通参考转视频）"}),
+            "cfg": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 20.0, "step": 0.1}),
+            "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "res_multistep"}),
+            "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple"}),
+            "last_lora_name": (loras, {"default": _NONE, "tooltip": "只在最后 N 步注入的 LoRA（如皮肤质感）；无=全程基座"}),
+            "last_lora_strength": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+            "last_lora_clip": ("FLOAT", {"default": 0.0, "min": -20.0, "max": 20.0, "step": 0.01, "tooltip": "该 LoRA 的 CLIP 强度；纹理/皮肤 LoRA 一般 0"}),
+        })
+        # negative 在本节点是必连（两段采样要用），从基座 optional 移除避免重复
+        base["optional"].pop("negative", None)
+        return base
+
+    RETURN_TYPES = ("LATENT", "IMAGE", "STRING")
+    RETURN_NAMES = ("LATENT", "视频帧", "提示词/分段信息")
+    FUNCTION = "process"
+    CATEGORY = "Zoey Tool/MiniMax H3"
+
+    def process(self, prompt, resolution, aspect, duration, ref_image_size,
+                auto_declaration, director_mode, director_shots, library, mode,
+                sage_attention, dialogue_convert, ref_purposes, unet_name, clip_name,
+                vae_name, audio_vae_name, lora_list, loras, layout, layout_enabled,
+                negative, seed, steps, last_steps, cfg, sampler_name, scheduler,
+                last_lora_name, last_lora_strength, last_lora_clip, **refs):
+        import nodes
+        # 复用参考节点生成 model(vae/audio_vae) + positive(cond) + latent
+        ref_node = ZoeyMiniMaxH3ReferenceToVideo()
+        model, vae, audio_vae, cond, latent_in, prompt_text, _lv_frames = ref_node.process(
+            unet_name, clip_name, vae_name, audio_vae_name, lora_list, loras,
+            prompt, mode, resolution, aspect, duration, ref_image_size, auto_declaration,
+            director_mode, director_shots, library, sage_attention, dialogue_convert,
+            ref_purposes, layout, layout_enabled, **refs)
+
+        # 无 last_lora 或 last_steps==0：纯基座，一次采样到底
+        if last_lora_name == _NONE or last_steps <= 0:
+            import comfy.sample
+            latent_image = comfy.sample.fix_empty_latent_channels(
+                model, latent_in["samples"], latent_in.get("downscale_ratio_spacial", None),
+                latent_in.get("downscale_ratio_temporal", None))
+            batch_inds = latent_in["batch_index"] if "batch_index" in latent_in else None
+            noise = comfy.sample.prepare_noise(latent_image, seed, batch_inds)
+            samples = comfy.sample.sample(
+                model, noise, steps, cfg, sampler_name, scheduler, cond, negative, latent_image,
+                denoise=1.0, noise_mask=latent_in.get("noise_mask"), seed=seed)
+            out = latent_in.copy()
+            out.pop("downscale_ratio_spacial", None)
+            out.pop("downscale_ratio_temporal", None)
+            out["samples"] = samples
+            info = f"全程基座采样（未注入 last_lora）：{steps} 步"
+        else:
+            out, info = ZoeyMiniMaxH3LastStepsLora().process(
+                model, cond, negative, latent_in, last_lora_name, last_lora_strength,
+                last_lora_clip, seed, steps, last_steps, cfg, sampler_name, scheduler)
+            info = prompt_text.replace("\n", " ") + " ｜ " + info
+
+        # 视频 latent 解码出视频帧（可直接接 VideoCombine）
+        frames = nodes.VAEDecode().decode(out["samples"], vae)[0]
+        return (out, frames, info)
+
+
+class ZoeyMiniMaxH3LongVideo:
+    """长视频驱动节点：复用主节点已加载 model/vae/audio_vae，自己加载 clip，逐段提示词、末帧续接、按序拼接。
+
+    接法：主节点出 model/vae/audio_vae/视频帧/音频 给本节点；本节点内部循环调用主节点生成逻辑——
+    每轮把上一段末尾帧返回给主节点生成逻辑当参考图，采样出下一段（用户逐段填提示词）。全部完成后
+    torch.cat 拼帧 + 音频按序拼接 → IMAGE+AUDIO → 外置 VHS VideoCombine 出 mp4。
+    画布/时长/步数由主节点首帧形状自动推导（无需重复填写采样/时长/分辨率）。
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        opt = {
+            "first_frames": ("IMAGE", {"tooltip": "主节点「视频帧」输出：第1段 + 末帧续接的种子"}),
+            "first_audio": ("AUDIO", {"tooltip": "主节点「音频」输出（可选；无音频则输出纯视频）"}),
+            "negative": ("CONDITIONING",),
+        }
+        for i in range(_IMAGE_SLOTS):
+            opt[f"ref_image_{i}"] = ("IMAGE",)
+        for i in range(_VIDEO_SLOTS):
+            opt[f"ref_video_{i}"] = ("IMAGE",)
+            opt[f"ref_video_audio_{i}"] = ("AUDIO",)
+        for i in range(_AUDIO_SLOTS):
+            opt[f"ref_audio_{i}"] = ("AUDIO",)
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "主节点「model」输出（复用已加载模型，不重复加载）"}),
+                "vae": ("VAE", {"tooltip": "主节点「vae」输出"}),
+                "audio_vae": ("VAE", {"tooltip": "主节点「audio_vae」输出（无音频可为空）"}),
+                "clip": ("CLIP", {"tooltip": "主节点「clip」输出（post-LoRA，直接复用）"}),
+                "settings": ("STRING", {"multiline": True,
+                                        "tooltip": "主节点「设置」输出：steps/cfg/sampler_name/scheduler/seed，自动同步采样参数"}),
+                "segments": ("INT", {"default": 2, "min": 1, "max": 40,
+                                     "tooltip": "总段数：第1段用主节点首帧，此节点续接 2..N。"}),
+            },
+            "optional": {
+                **opt,
+                # 固定槽位：第2段起每段一个提示词框（最多40段→39个）。前端按 segments 用 toggleWidget 显示/隐藏，
+                # 预定义而非运行时增删，保证 widget 列表恒定 → widgets_values 不串位、序列化稳定。
+                **{f"prompt_{i}": ("STRING", {"multiline": True, "default": "",
+                                             "tooltip": f"第 {i + 2} 段提示词"}) for i in range(39)},
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "AUDIO")
+    RETURN_NAMES = ("视频帧", "音频")
+    FUNCTION = "process"
+    CATEGORY = "Zoey Tool/MiniMax H3"
+    OUTPUT_NODE = True
+
+    def process(self, model, vae, audio_vae, clip, settings="{}", segments=2,
+                first_frames=None, first_audio=None, negative=None, **kwargs):
+        import torch, json
+        segments = max(1, int(segments or 2))
+        if first_frames is None:
+            raise ValueError("长视频节点需要接入主节点「视频帧」作为第1段。")
+        sp = {}
+        try:
+            sp = json.loads(settings or "{}")
+        except Exception:
+            sp = {}
+        if not isinstance(sp, dict):
+            sp = {}
+        steps = int(sp.get("steps", 25) or 25)
+        cfg = float(sp.get("cfg", 4.0) or 4.0)
+        sampler_name = sp.get("sampler_name", "res_multistep") or "res_multistep"
+        scheduler = sp.get("scheduler", "simple") or "simple"
+        seed = int(sp.get("seed", 0) or 0)
+        # 第2段起每段一个提示词框（前端按 segments 显示/隐藏 prompt_0..N）；留空 = 沿用上一段（链式续写）
+        plist = [kwargs.get(f"prompt_{i}", "") or "" for i in range(max(0, segments - 1))]
+        # 画布 + 每段帧数：直接从主节点首段帧推导，保证各段能拼接
+        H, W = first_frames.shape[1], first_frames.shape[2]
+        dur = first_frames.shape[0] / 24.0
+        # 参考素材：与主节点同源接入（保留全部人物/场景/音频），后门透传给 _segment
+        refs = {k: v for k, v in kwargs.items() if k.startswith("ref_") and v is not None}
+        ref_node = ZoeyMiniMaxH3ReferenceToVideo()
+        seg_frames = [first_frames]
+        seg_audios = [first_audio] if first_audio is not None else []
+        prev = first_frames[-1:]
+        last_prompt = ""
+        for i in range(2, segments + 1):
+            idx = i - 2
+            p = plist[idx] if idx < len(plist) else ""
+            if not (p or "").strip():
+                p = last_prompt  # 该段提示词留空 → 沿用上一段（链式续写）
+            last_prompt = p
+            _m, _v, _av, _c, _cond, _lat, _info, fr, au, _set = ref_node._segment(
+                model=model, clip=clip, vae=vae, audio_vae=audio_vae,
+                prompt=p, mode="参考", resolution="自动", aspect="自动", duration=dur,
+                ref_image_size="match", auto_declaration=False, director_mode=False,
+                director_shots="[]", library="", tray="[]", sage_attention=False,
+                dialogue_convert=True, ref_purposes="{}", layout="{}", layout_enabled=False,
+                negative=negative, seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name,
+                scheduler=scheduler, last_lora_name=_NONE, last_lora_strength=1.0,
+                last_lora_clip=0.0, last_steps=0, width_override=W, height_override=H,
+                prev_frame=prev, **refs)
+            seg_frames.append(fr)
+            if au is not None:
+                seg_audios.append(au)
+            prev = fr[-1:]
+        out = torch.cat(seg_frames, dim=0)
+        audio = None
+        if len(seg_audios) == segments and all(a is not None for a in seg_audios):
+            audio = dict(seg_audios[0])
+            audio["waveform"] = torch.cat([a["waveform"] for a in seg_audios], dim=-1)
+        return (out, audio)
+
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -942,5 +1774,6 @@ NODE_DISPLAY_NAME_MAPPINGS["ZoeyStylePrompt"] = "Zoey - 风格下拉选择 (@)"
 if _H3_AVAILABLE:
     NODE_CLASS_MAPPINGS["ZoeyMiniMaxH3ReferenceToVideo"] = ZoeyMiniMaxH3ReferenceToVideo
     NODE_DISPLAY_NAME_MAPPINGS["ZoeyMiniMaxH3ReferenceToVideo"] = "Zoey - MiniMax H3 参考转视频 (@)"
-
+    NODE_CLASS_MAPPINGS["ZoeyMiniMaxH3LongVideo"] = ZoeyMiniMaxH3LongVideo
+    NODE_DISPLAY_NAME_MAPPINGS["ZoeyMiniMaxH3LongVideo"] = "Zoey - MiniMax H3 长视频 (循环·末帧续接)"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

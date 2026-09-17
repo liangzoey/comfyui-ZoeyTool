@@ -48,9 +48,18 @@ except ImportError:
 # ── MiniMax H3 参考转视频（@ 语法包装，依赖 comfy_extras） ──
 from .zoey_minimax_h3 import NODE_CLASS_MAPPINGS as MINIMAX_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MINIMAX_DISPLAY
 
+# ── 音乐生成（YuE2 全管线一体化，依赖 comfy_extras 的 YuE2 核心节点） ──
+from .zoey_yue2_studio import NODE_CLASS_MAPPINGS as YUE2_STUDIO_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as YUE2_STUDIO_DISPLAY
+
 # ── 永久素材库 HTTP 接口（注册 /zoey/library 路由，无节点映射） ──
 try:
     from . import zoey_library_server  # noqa: F401
+except Exception:
+    pass
+
+# ── 3D 白模导演台布局截图接口（注册 /zoey/layout/save 路由） ──
+try:
+    from . import zoey_layout_server  # noqa: F401
 except Exception:
     pass
 
@@ -81,6 +90,7 @@ NODE_CLASS_MAPPINGS = {
     **MULTI_CANVAS_MAPPINGS,
     **TEXT_OVERLAY_MAPPINGS,
     **MINIMAX_MAPPINGS,
+    **YUE2_STUDIO_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -102,6 +112,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **MULTI_CANVAS_DISPLAY,
     **TEXT_OVERLAY_DISPLAY,
     **MINIMAX_DISPLAY,
+    **YUE2_STUDIO_DISPLAY,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
