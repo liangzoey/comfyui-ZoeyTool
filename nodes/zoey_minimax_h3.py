@@ -1337,8 +1337,10 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                                       or any(a is not None for a in ref_audios.values())):
                 raise ValueError("参考模式引用了音频素材，请选择 audio_vae_name")
             outputs = MiniMaxH3ReferenceToVideo.execute(
-                clip, vae, audio_vae, prompt_text, width, height, length,
-                ref_image_size, ref_images, ref_videos, ref_video_audios, ref_audios)
+                clip=clip, prompt=prompt_text, width=width, height=height, length=length,
+                ref_image_size=ref_image_size, vae=vae, audio_vae=audio_vae,
+                ref_images=ref_images, ref_videos=ref_videos,
+                ref_video_audios=ref_video_audios, ref_audios=ref_audios)
             return (outputs.args[0], outputs.args[1], prompt_text)
         # 永久全局素材库：从磁盘读清单，仅对提示词里 @L 引用的条目注入媒体
         library = _load_global_library()
@@ -1414,8 +1416,10 @@ class ZoeyMiniMaxH3ReferenceToVideo:
             raise ValueError("参考模式引用了音频素材，请选择 audio_vae_name")
 
         outputs = MiniMaxH3ReferenceToVideo.execute(
-            clip, vae, audio_vae, prompt_text, width, height, length,
-            ref_image_size, ref_images, ref_videos, ref_video_audios, ref_audios,
+            clip=clip, prompt=prompt_text, width=width, height=height, length=length,
+            ref_image_size=ref_image_size, vae=vae, audio_vae=audio_vae,
+            ref_images=ref_images, ref_videos=ref_videos,
+            ref_video_audios=ref_video_audios, ref_audios=ref_audios,
         )
         return (outputs.args[0], outputs.args[1], prompt_text)
 
