@@ -35,6 +35,7 @@ pip install -r requirements.txt
 | **Image Edit Prompt Generator** | Auto-generate edit prompts for text/object/style/background editing, virtual try-on, object add/remove |
 | **Frame Crop/Outpaint** | Interactive frame-based cropping and outpainting with fill color, real-time canvas preview |
 | **Multi-layer Canvas** | 5-layer image compositing with drag reposition, scroll scale, rotation handle, and horizontal/vertical flip |
+| **Local Detailer (Face/Hand)** | Detect faces/hands, crop and upscale each region, sample it locally with your MODEL/VAE, then feather-paste back. Optional mask adds manual regions |
 
 #### 🎥 Video Processing
 
@@ -183,6 +184,7 @@ pip install -r requirements.txt
 | **图像编辑提示词生成器** | 自动生成编辑提示词，支持文字/对象/风格/背景编辑、虚拟试穿、对象添加/移除 |
 | **框选裁剪/外扩** | 交互式框选裁剪与画布外扩，实时预览，自定义填充色 |
 | **多功能画布** | 5 层图像叠加合成，拖拽移动、滚轮缩放、旋转手柄、水平/垂直翻转 |
+| **局部重绘（面部/手部）** | 检测面部/手部区域，裁剪放大后局部采样重绘，再羽化贴回原图；可接遮罩追加手动区域 |
 
 #### 🎥 视频处理
 
