@@ -54,6 +54,15 @@ except ImportError:
 # ── MiniMax H3 参考转视频（@ 语法包装，依赖 comfy_extras） ──
 from .zoey_minimax_h3 import NODE_CLASS_MAPPINGS as MINIMAX_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MINIMAX_DISPLAY
 
+# ── MiniMax H3 空间分块采样（tile + 重叠加权融合） ──
+from .zoey_h3_tiled import NODE_CLASS_MAPPINGS as H3_TILED_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as H3_TILED_DISPLAY
+
+# ── MiniMax H3 遮罩角色替换（SAM3 自动分割跟踪 + noise mask 重绘） ──
+from .zoey_minimax_h3_mask import NODE_CLASS_MAPPINGS as H3_MASK_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as H3_MASK_DISPLAY
+
+# ── 证件照底色选择 ──
+from .zoey_id_photo_bg import NODE_CLASS_MAPPINGS as ID_PHOTO_BG_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as ID_PHOTO_BG_DISPLAY
+
 # ── 音乐生成（YuE2 全管线一体化，依赖 comfy_extras 的 YuE2 核心节点） ──
 from .zoey_yue2_studio import NODE_CLASS_MAPPINGS as YUE2_STUDIO_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as YUE2_STUDIO_DISPLAY
 
@@ -98,6 +107,9 @@ NODE_CLASS_MAPPINGS = {
     **TEXT_OVERLAY_MAPPINGS,
     **LOCAL_DETAILER_MAPPINGS,
     **MINIMAX_MAPPINGS,
+    **H3_TILED_MAPPINGS,
+    **H3_MASK_MAPPINGS,
+    **ID_PHOTO_BG_MAPPINGS,
     **YUE2_STUDIO_MAPPINGS,
 }
 
@@ -122,6 +134,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **TEXT_OVERLAY_DISPLAY,
     **LOCAL_DETAILER_DISPLAY,
     **MINIMAX_DISPLAY,
+    **H3_TILED_DISPLAY,
+    **H3_MASK_DISPLAY,
+    **ID_PHOTO_BG_DISPLAY,
     **YUE2_STUDIO_DISPLAY,
 }
 

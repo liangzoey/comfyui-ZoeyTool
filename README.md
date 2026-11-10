@@ -62,6 +62,8 @@ pip install -r requirements.txt
 | **VR 360° Preview** | 360° equirectangular panorama VR viewer powered by Pannellum |
 | **System Monitor** | Live CPU/RAM/VRAM/GPU temperature & utilization dashboard via embedded HTTP server, with background VRAM auto-cleanup |
 | **MiniMax H3 Reference-to-Video (@)** | Wraps official MiniMaxH3ReferenceToVideo with Seedance-style @ reference tags (@P1/@V1/@A1/@C1/@L1) auto-expanded to native tags, plus a storyboard director panel and a permanent global asset library |
+| **MiniMax H3 Mask Character Replace (SAM3)** | One node: source video → SAM3.1 text-prompt segmentation + video tracking → masked latent re-render via H3 ref2va. Replaces the person inside the mask with the reference character; background, other people and the original soundtrack stay untouched |
+| **ID Photo Background** | Dropdown of 红底 / 白底 / 蓝底 / 绿底, outputs the selected colour name as a STRING for prompt or background-replacement nodes |
 | **Music Generation (YuE2)** | Whole YuE2 pipeline in ONE node: text-to-music, cover (reference song → melody → re-sing), AI lyric writing, voice conversion, LoRA. Type a one-line description, set a duration slider, press Run |
 
 ##### Music Generation Usage
@@ -125,6 +127,26 @@ Wraps the official `MiniMaxH3ReferenceToVideo` (text + image/video/audio referen
 - Character slots `@C` (assign a reference image → auto ``<Picture K> 是{name}的人物参考（锁定脸和服装）`` declaration)
 - Transition presets, duration with one-click **auto-allocate by dialogue length**, timeline start timestamps, shot reorder/duplicate, shot templates (product ad / character story / transition rhythm / music MV)
 - Reference-purpose quick annotation, sound/music fields (`overall_soundscape` / `non_diegetic_music`), cross-shot consistency toggle, and a live compiled-prompt preview
+
+**🧬 Mask character replace mode**: switch `mode` to **遮罩替换** in the mode bar, connect the source frames to `replace_video` and optional `replace_audio` / `replace_mask`. SAM3.1 segments + tracks the target on every frame (`replace_seg_prompt`, `replace_max_objects`, `replace_mask_grow`…), the node re-renders only the masked region through H3 ref2va using `ref_image_0…` as the replacement character, and `replace_preserve_audio` keeps the original soundtrack. Leave the prompt empty to use the built-in template, or describe both the replacement character and the source scene — describing only the character makes the model paste the reference photo's own background inside the mask. All `replace_*` settings stay collapsed behind the **🧬 遮罩替换设置** row (only shown in this mode) so the node keeps its original height.
+
+##### Mask Character Replace (SAM3) Usage
+
+Whole video-to-video pipeline in ONE node — the equivalent of a SeC + H3 replacement graph, with the segmenter swapped for ComfyUI's native **SAM3.1**:
+
+1. Connect source frames (`VHS_LoadVideo` or any IMAGE batch) and optional source `audio`.
+2. Connect the replacement character image to `ref_image_0` (prompt refers to it as `<Picture 1>` / `@P1`).
+3. `seg_prompt` is an English noun phrase SAM3 tracks across all frames (`person`, `woman`, `red car`). `max_objects` + `object_indices` pick which tracked target to mask; `mask_grow` expands the silhouette, `mask_feather` softens the seam.
+4. The node VAE-encodes the source, applies the mask as a noise mask (`denoise 1.0` repaints only the masked region), keeps the audio latent untouched by default, samples H3 ref2va and returns frames + audio + mask.
+
+Outputs: `视频帧` (IMAGE), `音频` (AUDIO), `遮罩` (MASK, for preview), `信息` (STRING).
+
+Notes:
+- `resolution 自动` keeps the source aspect and caps the canvas at 1344×768 area; explicit entries scale the same way.
+- Frame count snaps down to the model's 17k+5 grid (min 5 frames).
+- Connect a `mask` input to override SAM3 entirely (hand-drawn / external matte).
+- Reference identity comes from the prompt: describe the character **and** the source scene together, otherwise the model may paste the reference's own background inside the mask.
+- `ref_image_size match` is faster; `max` (2048 short edge) holds identity better but is several times slower.
 
 ### Highlights
 
@@ -211,6 +233,8 @@ pip install -r requirements.txt
 | **VR 360° 预览** | 360° 全景图 VR 预览，基于 Pannellum 全屏查看器 |
 | **系统监控** | 实时监控 CPU/内存/显存/GPU 温度与利用率，内置 HTTP 看板，后台自动清理显存 |
 | **MiniMax H3 参考转视频 (@)** | 包装官方 MiniMaxH3ReferenceToVideo，支持 Seedance 风格 @P1/@V1/@A1/@C1/@L1 引用语法自动展开为原生标签，附带导演台分镜面板与永久全局素材库 |
+| **MiniMax H3 遮罩角色替换 (SAM3)** | 一个节点跑完：源视频 → SAM3.1 文本提示分割 + 逐帧跟踪 → 遮罩内 latent 重绘（H3 ref2va）。把遮罩里的人换成参考角色，背景/其他人/原音轨保持不动 |
+| **证件照底色** | 红底 / 白底 / 蓝底 / 绿底 四选一下拉，直接把选中的底色文字作为 STRING 输出，供提示词或换底节点使用 |
 | **音乐生成 (YuE2)** | 把整条 YuE2 管线压进一个节点：文生音乐、翻唱（参考曲→旋律→重唱）、AI 写词、音色转换、LoRA。填一句描述、拖一下时长、按运行 |
 
 ##### 音乐生成 使用方法
@@ -274,6 +298,26 @@ pip install -r requirements.txt
 - 角色槽 `@C`（分配参考图 → 自动生成 ``<Picture K> 是{name}的人物参考（锁定脸和服装）`` 声明）
 - 转场预设、时长 + 一键**按台词分配时长**、镜头起始时间轴、镜头复制/上下移、镜头模板（产品广告/角色剧情/转场节奏/音乐MV）
 - 参考用途快捷标注、音效/配乐字段（`overall_soundscape` / `non_diegetic_music`）、跨镜一致开关、实时编译预览
+
+**🧬 遮罩替换模式**：模式条切到 **遮罩替换**，源视频帧接 `replace_video`，源音轨接 `replace_audio`（可选），手绘/外部遮罩接 `replace_mask`（连了就跳过 SAM3）。SAM3.1 会逐帧分割并跟踪目标（`replace_seg_prompt`、`replace_max_objects`、`replace_mask_grow`…），节点只重绘遮罩区域，替换角色取 `ref_image_0…`，`replace_preserve_audio` 默认保留原音轨。提示词留空会用内置模板；手写时要把「换成谁」和「源视频是什么场景」一起写，只写角色会让模型把参考图自己的背景糊进遮罩。所有 `replace_*` 参数收在 **🧬 遮罩替换设置** 折叠行里（只在该模式显示），默认收起，节点高度维持原样。
+
+##### 遮罩角色替换 使用方法
+
+整条视频改人管线压进一个节点——等价于「SeC 分割 + H3 替换」工作流，分割器换成 ComfyUI 原生 **SAM3.1**：
+
+1. 连源视频帧（`VHS_LoadVideo` 或任意 IMAGE 批次）和可选的源 `audio`。
+2. 替换角色图连到 `ref_image_0`（提示词里用 `<Picture 1>` / `@P1` 引用）。
+3. `seg_prompt` 填英文名词短语，SAM3 会在所有帧上跟踪它（`person` / `woman` / `red car`）。`max_objects` + `object_indices` 选跟踪目标；`mask_grow` 外扩轮廓，`mask_feather` 羽化接缝。
+4. 节点内部做源视频 VAE 编码、把遮罩当 noise mask（`denoise 1.0` 只重绘遮罩内）、默认原样保留音频 latent、跑 H3 ref2va 采样，输出视频帧 + 音频 + 遮罩。
+
+输出：`视频帧`(IMAGE)、`音频`(AUDIO)、`遮罩`(MASK，可预览)、`信息`(STRING)。
+
+注意：
+- `resolution 自动` 跟随源视频比例，画布面积封顶 1344×768；手选档位按面积等比缩放。
+- 帧数会自动向下对齐到模型的 17k+5 网格（最少 5 帧）。
+- 连了 `mask` 输入就完全跳过 SAM3（手绘/外部遮罩优先）。
+- 参考角色的还原度靠提示词：要同时描述角色**和**源视频场景，否则模型可能把参考图自己的背景糊进遮罩里。
+- `ref_image_size match` 更快；`max`（2048 短边）人物更保真但慢数倍。
 
 ### 功能亮点
 

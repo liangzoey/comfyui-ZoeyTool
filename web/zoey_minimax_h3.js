@@ -303,6 +303,17 @@ const STYLE = `
   margin: 12px 14px;
   pointer-events: auto;
 }
+/* Nodes 2.0（Vue 节点）会给 DOM 控件子元素加 flex:1，把固定高度的自绘控件压扁，
+   这里锁回自身高度；仅在 Vue 节点里生效，旧渲染不受影响。 */
+div.zoey-prompt-container,
+div.zoey-duration,
+div.zoey-director,
+div.zoey-library,
+div.zoey-loras,
+div.zoey-layout,
+div.zoey-mode-holder {
+  flex: 0 0 auto;
+}
 /* ---- 富文本 prompt 编辑器（创作区卡片：顶部模式条 + 编辑框 + 预览条，合并为一个控件避免 widgets_values 错位） ---- */
 .zoey-prompt-container {
   --comfy-widget-height: 280px;
@@ -364,6 +375,25 @@ const STYLE = `
   --comfy-widget-min-height: 0px;
   --comfy-widget-max-height: 0px;
   display: none;
+}
+/* 遮罩替换设置：折叠开关行（仅在遮罩替换模式显示，展开后显示节点末尾的 replace_* 参数） */
+.zoey-replace-toggle {
+  flex: 0 0 auto;
+  margin: 4px 6px 2px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #8fd0a8;
+  background: rgba(80, 200, 130, .06);
+  border: 1px solid rgba(80, 200, 130, .25);
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: all .15s ease;
+}
+.zoey-replace-toggle:hover {
+  background: rgba(80, 200, 130, .14);
+  border-color: #8fd0a8;
+  color: #c8f0d8;
 }
 /* ── 3D 白模导演台（默认折叠，点标题展开大舞台） ── */
 .zoey-layout {
@@ -1614,12 +1644,13 @@ function caretTexts(el) {
 }
 
 // ---- 创建 contenteditable prompt 控件（含下方预览条，合并为一个控件） ----
-const MODE_OPTIONS = ["参考", "T2V", "I2V", "自动"];
+const MODE_OPTIONS = ["参考", "T2V", "I2V", "自动", "遮罩替换"];
 const MODE_HINTS = {
   "参考": "参考转视频：用 @P1/@V1/@A1 引用素材",
   "T2V": "纯文生视频（忽略参考素材）",
   "I2V": "图生视频：第一张已连接参考图作首帧；≥2 张时最后一张作尾帧",
   "自动": "自动：有视频/音频→参考；单图→I2V；多图→参考；无素材→T2V",
+  "遮罩替换": "源视频接 replace_video，SAM3 自动分割跟踪出遮罩，遮罩内换成参考角色（参考图接 ref_image_0，@P1 引用）",
 };
 
 // 参考图用途标注（官方手册：参考图必须标注用途，否则保主体不保背景）
@@ -1742,6 +1773,101 @@ function buildModeBar(node) {
   return bar;
 }
 
+// ---- 遮罩替换设置：折叠开关（只在遮罩替换模式显示；展开后显示节点末尾的 replace_* 参数） ----
+const REPLACE_WIDGET_NAMES = [
+  "replace_sam3_model", "replace_seg_prompt", "replace_detect_threshold",
+  "replace_max_objects", "replace_object_indices", "replace_detect_interval",
+  "replace_mask_grow", "replace_mask_feather", "replace_invert_mask",
+  "replace_preserve_audio", "replace_denoise", "replace_lock_background",
+];
+const REPLACE_WIDGET_LABELS = {
+  replace_sam3_model: "SAM3 模型",
+  replace_seg_prompt: "分割词",
+  replace_detect_threshold: "检测阈值",
+  replace_max_objects: "最多目标",
+  replace_object_indices: "目标编号",
+  replace_detect_interval: "检测间隔",
+  replace_mask_grow: "遮罩外扩",
+  replace_mask_feather: "遮罩羽化",
+  replace_invert_mask: "遮罩反选",
+  replace_preserve_audio: "保留原音",
+  replace_denoise: "重绘强度",
+  replace_lock_background: "追加场景约束",
+};
+
+function setupReplacePanel(node, container) {
+  const row = document.createElement("div");
+  row.className = "zoey-replace-toggle";
+  row.style.display = "none";
+  row.title = "展开/收起遮罩替换参数";
+  container.appendChild(row);
+
+  let open = false;
+  const widgets = () => REPLACE_WIDGET_NAMES
+    .map((n) => node.widgets?.find((w) => w.name === n))
+    .filter(Boolean);
+
+  const hide = (w) => {
+    if (!w.__zoeyOrigComputeSize) w.__zoeyOrigComputeSize = w.computeSize;
+    w.hidden = true;
+    w.computeSize = () => [0, -4];
+    if (w.element) w.element.style.display = "none";
+    if (w.inputEl && w.inputEl !== w.element) w.inputEl.style.display = "none";
+  };
+  const show = (w) => {
+    w.hidden = false;
+    if (w.__zoeyOrigComputeSize) w.computeSize = w.__zoeyOrigComputeSize;
+    else delete w.computeSize;
+    if (w.element) w.element.style.display = "";
+    if (w.inputEl && w.inputEl !== w.element) w.inputEl.style.display = "";
+  };
+
+  const apply = (resize = false) => {
+    for (const w of widgets()) (open ? show : hide)(w);
+    row.textContent = open ? "🧬 遮罩替换设置 ▾" : "🧬 遮罩替换设置 ▸";
+    if (resize) {
+      try {
+        // 只在用户点开/收起时改高度，避免加载时把节点拉到几千像素
+        // 宽度保持原样：computeSize() 的宽度会按最长控件名重算
+        const size = node.computeSize?.();
+        if (size) node.setSize([node.size?.[0] ?? size[0], size[1]]);
+      } catch (e) {
+        console.error("[Zoey MiniMax H3] replace panel resize:", e);
+      }
+    }
+    app.graph?.setDirtyCanvas(true, true);
+  };
+
+  row.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    open = !open;
+    apply(true);
+  });
+
+  const labelWidgets = () => {
+    for (const n of REPLACE_WIDGET_NAMES) {
+      const w = node.widgets?.find((x) => x.name === n);
+      if (w && REPLACE_WIDGET_LABELS[n]) w.label = REPLACE_WIDGET_LABELS[n];
+    }
+  };
+
+  node._zoeyReplacePanel = {
+    setVisible(visible) {
+      labelWidgets();
+      row.style.display = visible ? "" : "none";
+      if (!visible) open = false;
+      apply();
+    },
+  };
+  // 参数控件比 prompt 晚创建：延迟到控件就绪后再按当前模式收起
+  setTimeout(() => {
+    labelWidgets();
+    const modeW = node.widgets?.find((w) => w.name === "mode");
+    node._zoeyReplacePanel?.setVisible(modeW?.value === "遮罩替换");
+  }, 0);
+}
+
 function createPromptEditor(node, name, inputData) {
   const container = document.createElement("div");
   container.className = "zoey-prompt-container";
@@ -1775,6 +1901,14 @@ function createPromptEditor(node, name, inputData) {
   previewMeta.className = "zoey-preview-meta";
   previewMeta.style.display = "none";
   container.append(previewRow, previewBox, previewMeta);
+
+  // 遮罩替换参数常显：参数在 prompt 之后创建，延迟一次统一改中文标签
+  setTimeout(() => {
+    for (const n of REPLACE_WIDGET_NAMES) {
+      const w = node.widgets?.find((x) => x.name === n);
+      if (w && REPLACE_WIDGET_LABELS[n]) w.label = REPLACE_WIDGET_LABELS[n];
+    }
+  }, 0);
 
   function updatePreview() {
     if (previewBox.style.display === "none") return;
@@ -1822,7 +1956,7 @@ function createPromptEditor(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: container,
     options: {
       hideOnZoom: true,
@@ -1932,7 +2066,7 @@ function createDurationWidget(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: container,
     options: {
       hideOnZoom: true,
@@ -2012,7 +2146,7 @@ function createModeWidget(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: holder,
     options: {
       hideOnZoom: true,
@@ -2021,6 +2155,7 @@ function createModeWidget(node, name, inputData) {
         const m = MODE_OPTIONS.includes(v) ? v : MODE_OPTIONS[0];
         current = m;
         if (node._zoeyModeBar) node._zoeyModeBar.setActive(m);
+        node._zoeyReplacePanel?.setVisible(m === "遮罩替换");
         node._zoeyDirector?.composePreview?.();
       },
     },
@@ -2030,6 +2165,7 @@ function createModeWidget(node, name, inputData) {
   addWidget(node, widget);
   node._zoeyModeWidget = widget;
   if (node._zoeyModeBar) node._zoeyModeBar.setActive(current);
+  node._zoeyReplacePanel?.setVisible(current === "遮罩替换");
   return widget;
 }
 
@@ -2041,7 +2177,7 @@ function createRefPurposesWidget(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: holder,
     options: {
       hideOnZoom: true,
@@ -2986,7 +3122,21 @@ function createLayoutStage(host, onChange) {
 
   return {
     render() { renderer.render(scene, camera); },
-    setState(json) { try { state = JSON.parse(json); } catch (e) { state = { file: "", camera: {}, actors: [], props: [], activeCamera: "main" }; } rebuild(); updateCamera(); },
+    setState(json) {
+      let s;
+      try { s = JSON.parse(json); } catch (e) { s = {}; }
+      if (!s || typeof s !== "object" || Array.isArray(s)) s = {};
+      state = {
+        file: s.file || "",
+        camera: (s.camera && typeof s.camera === "object") ? s.camera : {},
+        cameras: Array.isArray(s.cameras) ? s.cameras : [],
+        actors: Array.isArray(s.actors) ? s.actors : [],
+        props: Array.isArray(s.props) ? s.props : [],
+        walls: Array.isArray(s.walls) ? s.walls : [],
+        activeCamera: s.activeCamera || "main",
+      };
+      rebuild(); updateCamera();
+    },
     getState() { const s = readState(); return JSON.stringify(s); },
     getStateObj() { return readState(); },
     exportShot,
@@ -3329,7 +3479,7 @@ function createLayoutWidget(node, name, inputData) {
   exportBtn.classList.add("primary");
 
   const widget = new DOMWidgetImpl({
-    node, name, type: "customtext", element: container,
+    node, name, type: "zoey_dom", element: container,
     options: {
       hideOnZoom: true,
       getValue: () => JSON.stringify(stateObj()),
@@ -3406,7 +3556,7 @@ function createDirectorPanel(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: container,
     options: {
       hideOnZoom: true,
@@ -4011,7 +4161,7 @@ function createLibraryWidget(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: container,
     options: { hideOnZoom: true, getValue: () => "", setValue: () => {} },
   });
@@ -4174,7 +4324,7 @@ function createLorasWidget(node, name, inputData) {
   const widget = new DOMWidgetImpl({
     node,
     name,
-    type: "customtext",
+    type: "zoey_dom",
     element: container,
     options: {
       hideOnZoom: true,
@@ -4335,7 +4485,7 @@ function createTrayWidget(node, name, inputData) {
   container.append(head, body);
 
   const widget = new DOMWidgetImpl({
-    node, name, type: "customtext", element: container,
+    node, name, type: "zoey_dom", element: container,
     options: {
       hideOnZoom: true,
       getValue: () => JSON.stringify(node._zoeyTray || []),
@@ -4733,6 +4883,18 @@ const WIDGET_LABELS = {
   "director_mode": "导演台",
   "dialogue_convert": "引号转对白",
   "mode": "模式",
+  "replace_sam3_model": "SAM3 模型",
+  "replace_seg_prompt": "分割词",
+  "replace_detect_threshold": "检测阈值",
+  "replace_max_objects": "最多目标",
+  "replace_object_indices": "目标编号",
+  "replace_detect_interval": "检测间隔",
+  "replace_mask_grow": "遮罩外扩",
+  "replace_mask_feather": "遮罩羽化",
+  "replace_invert_mask": "遮罩反选",
+  "replace_preserve_audio": "保留原音",
+  "replace_denoise": "重绘强度",
+  "replace_lock_background": "追加场景约束",
 };
 function relabelWidget(node, inputName, widget) {
   if (!widget || node?.comfyClass !== NODE_TYPE) return widget;
@@ -4899,84 +5061,74 @@ app.registerExtension({
   },
 });
 
-/* ── H3 长视频节点：prompt_0..N 按 segments 动态显示/隐藏（Easy-Use 范式） ──
-   后端预定义固定数量 prompt_0..38 文本框，前端只用 toggleWidget 显示/隐藏（computeSize 归 0 隐藏）。
-   不增删 node.widgets → widget 列表恒定 → widgets_values 不串位、各控件序列化稳定（按真实名字发）。
-   与主节点 ref/全局库等自研 DOMWidget 不同，这里直接用 ComfyUI 默认 STRING，最稳。 */
-const ZOEY_LONG_NODE = "ZoeyMiniMaxH3LongVideo";
-const ZOEY_LONG_PROMPT_SLOTS = 39;
+/* ── H3 主节点：long_segments 控制 prompt_1..N 动态显示/隐藏（改变段数即增减框）──
+   后端预定义固定 prompt_1..prompt_15 文本框，前端按 long_segments 只显示前 (n-1) 个，
+   隐藏的 computeSize 归 0。不增删 widget → 序列化稳定。 */
+const ZOEY_MAIN_NODE = "ZoeyMiniMaxH3ReferenceToVideo";
+const ZOEY_PROMPT_SLOTS = 15;
+const ZOEY_PROMPT_BOX_H = 64;
 
-const ZOEY_LONG_BOX_H = 64;
-
-function zoeyLongToggle(node) {
-  const seg = node.widgets?.find((w) => w.name === "segments");
+function zoeySegToggle(node) {
+  const seg = node.widgets?.find((w) => w.name === "long_segments");
   if (!seg) return false;
-  const showN = Math.max(0, (parseInt(seg.value, 10) || 2) - 1);
+  const showN = Math.max(0, (parseInt(seg.value, 10) || 1) - 1);
   let any = false;
-  for (let i = 0; i < ZOEY_LONG_PROMPT_SLOTS; i++) {
+  for (let i = 1; i <= ZOEY_PROMPT_SLOTS; i++) {
     const w = node.widgets?.find((x) => x.name === `prompt_${i}`);
     if (!w) continue;
     any = true;
-    const show = i < showN;
-    // ComfyUI 原生隐藏/显示：hidden 控件 isVisible()=false，不计高度
+    const show = i <= showN;
     w.hidden = !show;
-    // 每个可见框给固定高度，隐藏归 0 → node.computeSize() 求和即正确，节点确定性地长高
-    w.computeSize = show ? () => [node.size[0] || 1, ZOEY_LONG_BOX_H] : () => [0, 0];
+    w.computeSize = show ? () => [node.size[0] || 1, ZOEY_PROMPT_BOX_H] : () => [0, 0];
     const el = w.element ?? w.inputEl;
     if (el) {
       el.style.display = show ? "" : "none";
-      if (show) el.style.height = ZOEY_LONG_BOX_H + "px";
+      if (show) el.style.height = ZOEY_PROMPT_BOX_H + "px";
     }
   }
   if (!any) return false;
-  // 强制重算+撑高节点，避免新显示的框被裁掉/挤不出来
   try {
     node.setSize([node.size[0], Math.max(node.size[1], node.computeSize()[1])]);
     node.onResize?.(node.size);
-  } catch (e) { console.warn("[Zoey] long resize:", e); }
+  } catch (e) { console.warn("[Zoey] seg resize:", e); }
   app.graph?.setDirtyCanvas(true);
   return true;
 }
 
-function zoeyLongSetup(node) {
-  if (!zoeyLongToggle(node)) {
-    setTimeout(() => { try { zoeyLongSetup(node); } catch (e) { console.warn("[Zoey] long setup:", e); } }, 100);
+function zoeySegSetup(node) {
+  if (!zoeySegToggle(node)) {
+    setTimeout(() => { try { zoeySegSetup(node); } catch (e) {} }, 100);
     return;
   }
-  const seg = node.widgets?.find((w) => w.name === "segments");
-  if (seg && !seg._zoeyLongHooked) {
+  const seg = node.widgets?.find((w) => w.name === "long_segments");
+  if (seg && !seg._zoeySegHooked) {
     const prev = seg.callback;
-    // 原 callback 依赖 this===widget（读 this.options），必须 .call(this,...) 保 this
     seg.callback = function (val, canvas, nd) {
-      try { prev?.call(this, val, canvas, nd); } catch (e) { console.warn("[Zoey] long seg cb:", e); }
-      try { zoeyLongToggle(node); } catch (e) {}
+      try { prev?.call(this, val, canvas, nd); } catch (e) {}
+      try { zoeySegToggle(node); } catch (e) {}
       return undefined;
     };
-    seg._zoeyLongHooked = true;
+    seg._zoeySegHooked = true;
   }
 }
 
 app.registerExtension({
-  name: "ZoeyTool/minimax-h3-longvideo",
+  name: "ZoeyTool/minimax-h3-segments",
   beforeRegisterNodeDef(nodeType, nodeData) {
-    const isLong = nodeData?.name === ZOEY_LONG_NODE
-      || /长视频/.test(nodeData?.name || "")
-      || /长视频/.test(nodeData?.display_name || "");
-    if (!isLong) return;
+    if (nodeData?.name !== ZOEY_MAIN_NODE) return;
     const onCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       let r;
-      try { r = onCreated?.apply(this, arguments); } catch (e) { console.warn("[Zoey] long onCreated:", e); }
-      try { zoeyLongSetup(this); } catch (e) { console.warn("[Zoey] long onCreated setup:", e); }
+      try { r = onCreated?.apply(this, arguments); } catch (e) { console.warn("[Zoey] seg onCreated:", e); }
+      try { zoeySegSetup(this); } catch (e) { console.warn("[Zoey] seg setup:", e); }
       return r;
     };
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       let r;
-      try { r = onConfigure?.apply(this, arguments); } catch (e) { console.warn("[Zoey] long onConfigure:", e); }
-      try { zoeyLongSetup(this); } catch (e) { console.warn("[Zoey] long onConfigure setup:", e); }
+      try { r = onConfigure?.apply(this, arguments); } catch (e) { console.warn("[Zoey] seg onConfigure:", e); }
+      try { zoeySegSetup(this); } catch (e) { console.warn("[Zoey] seg setup:", e); }
       return r;
     };
   },
 });
-

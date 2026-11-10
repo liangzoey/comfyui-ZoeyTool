@@ -202,11 +202,32 @@ def _boxes_from_mask(mask_np, min_area=64):
     return boxes
 
 
+def _match_tone(patch, ref, fm):
+    """按羽化核心区的逐通道均值/方差，把重绘块色调、对比度对齐回原图，消除色块边。"""
+    core = fm >= 0.995
+    if int(core.sum()) < 64:
+        core = fm >= 0.5
+    if int(core.sum()) < 16:
+        return patch
+    out = patch.clone()
+    for c in range(patch.shape[-1]):
+        p = patch[..., c][core]
+        r = ref[..., c][core]
+        ps = p.std()
+        if float(ps) < 1e-5:
+            continue
+        gain = (r.std() / ps).clamp(0.8, 1.25)
+        offset = r.mean() - gain * p.mean()
+        out[..., c] = (out[..., c] * gain + offset).clamp(0.0, 1.0)
+    return out
+
+
 def _feather_mask(ch, cw, f, device, dtype):
     f = min(int(f), cw // 2, ch // 2)
     if f <= 0:
         return None
-    ramp = torch.linspace(0.0, 1.0, f + 2, device=device, dtype=dtype)[1:-1]
+    t = torch.linspace(0.0, 1.0, f + 2, device=device, dtype=dtype)[1:-1]
+    ramp = t * t * (3.0 - 2.0 * t)  # smoothstep，比线性斜坡过渡更看不出来
     m = torch.ones(ch, cw, device=device, dtype=dtype)
     m[:f, :] *= ramp[:, None]
     m[-f:, :] *= ramp.flip(0)[:, None]
@@ -341,7 +362,11 @@ class ZoeyLocalDetailer:
                     out_mask[b, y1:y2, x1:x2] = 1.0
                 else:
                     w = fm.unsqueeze(-1)
-                    out[b, y1:y2, x1:x2, :] = dec[0] * w + crop[0] * (1.0 - w)
+                    # 与“当前画布”混合：多人区域框互相重叠时，不会把上一块修好的地方
+                    # 又按 1-w 拉回原图，避免出现明显的拼接线
+                    base = out[b, y1:y2, x1:x2, :]
+                    patch = _match_tone(dec[0], crop[0], fm)
+                    out[b, y1:y2, x1:x2, :] = patch * w + base * (1.0 - w)
                     out_mask[b, y1:y2, x1:x2] = torch.maximum(
                         out_mask[b, y1:y2, x1:x2], fm)
 

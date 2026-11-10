@@ -52,6 +52,18 @@ def _vae_names():
     return nodes.VAELoader.vae_list(nodes.VAELoader)
 
 
+def _sam3_choices():
+    import folder_paths
+    files = folder_paths.get_filename_list("checkpoints")
+    hits = [f for f in files if "sam3" in f.lower()]
+    return hits or files or [_NONE]
+
+
+def _sam3_default():
+    hits = [f for f in _sam3_choices() if f != _NONE]
+    return hits[0] if hits else _NONE
+
+
 def _load_unet(unet_name):
     import folder_paths
     import comfy.sd
@@ -933,12 +945,20 @@ class ZoeyMiniMaxH3ReferenceToVideo:
         optional = {}
         for i in range(_IMAGE_SLOTS):
             optional[f"ref_image_{i}"] = ("IMAGE",)
+        # 遮罩替换模式：源视频帧 / 源音轨 / 手绘遮罩
+        optional["replace_video"] = ("IMAGE", {"tooltip": "遮罩替换：源视频帧（VHS_LoadVideo 等）"})
+        optional["replace_audio"] = ("AUDIO", {"tooltip": "遮罩替换：源视频音轨（默认原样保留）"})
+        optional["replace_mask"] = ("MASK", {"tooltip": "遮罩替换：手绘/外部遮罩；连了就跳过 SAM3"})
         optional["negative"] = ("CONDITIONING", {"tooltip": "长视频分段采样用的负向条件；接一个空/负面 ClipTextEncode"})
         for i in range(_VIDEO_SLOTS):
             optional[f"ref_video_{i}"] = ("IMAGE",)
             optional[f"ref_video_audio_{i}"] = ("AUDIO",)
         for i in range(_AUDIO_SLOTS):
             optional[f"ref_audio_{i}"] = ("AUDIO",)
+        # 长视频分段：第2段起每段一个提示词槽位（固定 15 个，留空=沿用上一段）
+        for i in range(1, 16):
+            optional[f"prompt_{i}"] = ("STRING", {"multiline": True, "default": "",
+                                                  "tooltip": f"第 {i + 1} 段提示词（留空=沿用上一段）"})
         return {
             "required": {
                 "prompt": ("STRING", {
@@ -977,7 +997,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                     "default": "",
                     "placeholder": "永久全局素材库（前端渲染，值不存工作流）",
                 }),
-                "mode": (["参考", "T2V", "I2V", "自动"], {"default": "参考"}),
+                "mode": (["参考", "T2V", "I2V", "自动", "遮罩替换"], {"default": "参考"}),
                 "sage_attention": ("BOOLEAN", {
                     "default": False,
                     "label_on": "启用 SageAttention",
@@ -1035,6 +1055,36 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                 "last_lora_strength": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
                 "last_lora_clip": ("FLOAT", {"default": 0.0, "min": -20.0, "max": 20.0, "step": 0.01, "tooltip": "该 LoRA 的 CLIP 强度；纹理/皮肤 LoRA 一般 0"}),
                 "last_steps": ("INT", {"default": 0, "min": 0, "max": 200, "tooltip": "最后多少步改用合成该LoRA的模型采样；0=不启用"}),
+                # ── 空间分块采样（追加在末尾，不动旧控件索引）──
+                "tiled_enabled": ("BOOLEAN", {"default": False, "label_on": "开启", "label_off": "关闭",
+                                              "tooltip": "空间分块采样：每步把画面切成 N×N 块分别跑 DiT 再融合。降低激活显存；步数必须够(≥12)，少步会崩。"}),
+                "tiles_x": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1, "tooltip": "横向分几块"}),
+                "tiles_y": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1, "tooltip": "纵向分几块"}),
+                "tile_overlap": ("INT", {"default": 10, "min": 2, "max": 128, "step": 2, "tooltip": "相邻块重叠（latent 单位），越大接缝越顺、耗时越多"}),
+                "long_segments": ("INT", {"default": 1, "min": 1, "max": 40,
+                                          "tooltip": "总段数：>1 时按 duration 每段生成、末帧续接后拼接成一条长视频（duration 为每段时长）"}),
+                # ── 遮罩角色替换（模式=遮罩替换；追加在末尾，不动旧控件索引） ──
+                "replace_sam3_model": (_sam3_choices(), {"default": _sam3_default(),
+                                                         "tooltip": "SAM3 权重（models/checkpoints，建议 sam3.1 multiplex fp16）"}),
+                "replace_seg_prompt": ("STRING", {"default": "person",
+                                                  "placeholder": "要分割的英文名词，如 person / car / robot"}),
+                "replace_detect_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "replace_max_objects": ("INT", {"default": 1, "min": 0, "max": 64,
+                                                "tooltip": "最多跟踪几个目标；0=CUDA 内部上限"}),
+                "replace_object_indices": ("STRING", {"default": "",
+                                                      "placeholder": "取哪些跟踪目标，逗号分隔如 0,2；空=全部"}),
+                "replace_detect_interval": ("INT", {"default": 1, "min": 0, "max": 8,
+                                                    "tooltip": "每隔 N 帧重新检测一次（1=每帧；0 按 1 处理）"}),
+                "replace_mask_grow": ("INT", {"default": 16, "min": 0, "max": 400,
+                                              "tooltip": "遮罩外扩像素；盖住头发/边缘，过大吃背景"}),
+                "replace_mask_feather": ("INT", {"default": 6, "min": 0, "max": 128,
+                                                 "tooltip": "遮罩羽化，减接缝"}),
+                "replace_invert_mask": ("BOOLEAN", {"default": False, "label_on": "反选", "label_off": "不反选"}),
+                "replace_preserve_audio": ("BOOLEAN", {"default": True, "label_on": "保留原音", "label_off": "重新生成"}),
+                "replace_denoise": ("FLOAT", {"default": 1.0, "min": 0.05, "max": 1.0, "step": 0.01,
+                                              "tooltip": "遮罩内重绘强度；1=完全重绘"}),
+                "replace_lock_background": ("BOOLEAN", {"default": False, "label_on": "追加约束", "label_off": "关闭",
+                                                        "tooltip": "提示词里再追加「角色融入源视频场景」；默认提示词已包含，短提示词时打开"}),
             },
             "optional": optional,
         }
@@ -1053,7 +1103,16 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                 dialogue_convert=True, ref_purposes="{}", layout="{}", layout_enabled=True,
                 negative=None, seed=0, steps=25,
                 cfg=4.0, sampler_name="res_multistep", scheduler="simple",
-                last_lora_name=_NONE, last_lora_strength=1.0, last_lora_clip=0.0, last_steps=0, **refs):
+                last_lora_name=_NONE, last_lora_strength=1.0, last_lora_clip=0.0, last_steps=0,
+                tiled_enabled=False, tiles_x=2, tiles_y=2, tile_overlap=10,
+                long_segments=1,
+                replace_sam3_model=_NONE, replace_seg_prompt="person",
+                replace_detect_threshold=0.5, replace_max_objects=1,
+                replace_object_indices="", replace_detect_interval=1,
+                replace_mask_grow=16, replace_mask_feather=6,
+                replace_invert_mask=False, replace_preserve_audio=True,
+                replace_denoise=1.0, replace_lock_background=False,
+                **refs):
         # ── 内置模型加载：UNet + CLIP + VAE + 音频 VAE，再叠 LoRA ──
         model = _load_unet(unet_name)
         clip = _load_clip(clip_name)
@@ -1063,13 +1122,63 @@ class ZoeyMiniMaxH3ReferenceToVideo:
         for lora_name, lora_model, lora_clip in parsed_loras:
             model, clip = _apply_lora(model, clip, lora_name, lora_model, lora_clip)
 
-        return self._segment(
+        # 遮罩角色替换：源视频 + SAM3 自动遮罩，内部完成采样后直接出片
+        if mode == "遮罩替换":
+            return self._run_mask_replace(
+                model, clip, vae, audio_vae, prompt, resolution, ref_image_size,
+                ref_purposes, tray, replace_sam3_model, replace_seg_prompt,
+                replace_detect_threshold, replace_max_objects, replace_object_indices,
+                replace_detect_interval, replace_mask_grow, replace_mask_feather,
+                replace_invert_mask, replace_preserve_audio, replace_denoise,
+                replace_lock_background, negative, seed, steps, cfg, sampler_name,
+                scheduler, **refs)
+
+        first = self._segment(
             model, clip, vae, audio_vae,
             prompt, mode, resolution, aspect, duration, ref_image_size,
             auto_declaration, director_mode, director_shots, library, tray,
             sage_attention, dialogue_convert, ref_purposes, layout, layout_enabled,
             negative, seed, steps, cfg, sampler_name, scheduler,
-            last_lora_name, last_lora_strength, last_lora_clip, last_steps, **refs)
+            last_lora_name, last_lora_strength, last_lora_clip, last_steps,
+            tiled_enabled, tiles_x, tiles_y, tile_overlap, **refs)
+
+        # 分段长视频：第1段已生成；2..N 段末帧续接后按序拼接，输出一条完整视频
+        n = int(long_segments or 1)
+        if n <= 1:
+            return first
+
+        import torch as _torch
+        model, vae, audio_vae, clip, cond, latent, prompt_text, frames, audio, settings = first
+        H, W = int(frames.shape[1]), int(frames.shape[2])
+        seg_frames = [frames]
+        seg_audios = [audio] if audio is not None else []
+        seg_refs = {k: v for k, v in refs.items() if not k.startswith("prompt_")}
+        prev = frames[-1:]
+        last_prompt = prompt
+        for i in range(2, n + 1):
+            p = (refs.get(f"prompt_{i - 1}") or "").strip() or last_prompt
+            last_prompt = p
+            r = self._segment(
+                model, clip, vae, audio_vae,
+                p, mode, resolution, aspect, duration, ref_image_size,
+                auto_declaration, director_mode, director_shots, library, tray,
+                sage_attention, dialogue_convert, ref_purposes, layout, layout_enabled,
+                negative, seed, steps, cfg, sampler_name, scheduler,
+                last_lora_name, last_lora_strength, last_lora_clip, last_steps,
+                tiled_enabled, tiles_x, tiles_y, tile_overlap,
+                width_override=W, height_override=H, prev_frame=prev, **seg_refs)
+            fr, au = r[7], r[8]
+            seg_frames.append(fr)
+            if au is not None:
+                seg_audios.append(au)
+            prev = fr[-1:]
+
+        out_frames = _torch.cat(seg_frames, dim=0)
+        out_audio = None
+        if len(seg_audios) == n and all(a is not None for a in seg_audios):
+            out_audio = dict(seg_audios[0])
+            out_audio["waveform"] = _torch.cat([a["waveform"] for a in seg_audios], dim=-1)
+        return (model, vae, audio_vae, clip, cond, latent, prompt_text, out_frames, out_audio, settings)
 
     def _segment(self, model, clip, vae, audio_vae, prompt, mode, resolution, aspect, duration,
                  ref_image_size, auto_declaration, director_mode, director_shots, library="",
@@ -1077,6 +1186,7 @@ class ZoeyMiniMaxH3ReferenceToVideo:
                  layout="{}", layout_enabled=True, negative=None, seed=0, steps=25,
                  cfg=4.0, sampler_name="res_multistep", scheduler="simple",
                  last_lora_name=_NONE, last_lora_strength=1.0, last_lora_clip=0.0, last_steps=0,
+                 tiled_enabled=False, tiles_x=2, tiles_y=2, tile_overlap=10,
                  composed_prompt=None, width_override=None, height_override=None, **refs):
         # 用已加载的 model/clip/vae 做单段生成（不重复加载）：process 与长视频节点都调这里
         ref_images = {}
@@ -1189,6 +1299,16 @@ class ZoeyMiniMaxH3ReferenceToVideo:
         # 集成 SageAttention：在模型克隆上启用，随 CONDITIONING/LATENT 一并返回
         if sage_attention:
             model = _apply_sage_attention(model)
+
+        # 空间分块采样：克隆模型并注入 tile wrapper；两段和单段采样都会走到
+        if tiled_enabled and int(tiles_x) * int(tiles_y) > 1:
+            import comfy.patcher_extension as _pe
+            from .zoey_h3_tiled import make_wrapper as _make_tiled
+            model = model.clone()
+            _pe.add_wrapper_with_key(
+                _pe.WrappersMP.DIFFUSION_MODEL, "zoey_h3_tiled",
+                _make_tiled(int(tiles_x), int(tiles_y), int(tile_overlap)),
+                model.model_options, is_model_options=True)
 
         # 最后N步注入LoRA（两段采样）：设置后节点自己采样，走 base→合成LoRA 续跑，输出画面
         if last_steps > 0 and last_lora_name != _NONE:
@@ -1424,6 +1544,167 @@ class ZoeyMiniMaxH3ReferenceToVideo:
         return (outputs.args[0], outputs.args[1], prompt_text)
 
 
+    def _run_mask_replace(self, model, clip, vae, audio_vae, prompt, resolution,
+                          ref_image_size, ref_purposes, tray, sam3_model, seg_prompt,
+                          detect_threshold, max_objects, object_indices, detect_interval,
+                          mask_grow, mask_feather, invert_mask, preserve_audio, denoise,
+                          lock_background, negative, seed, steps, cfg, sampler_name,
+                          scheduler, **refs):
+        """遮罩替换：源视频 + SAM3 自动遮罩（可选手绘），遮罩内重绘、遮罩外/音频保持原样。"""
+        import torch
+        import comfy.model_management
+        import comfy.sample as _cs
+        import latent_preview
+        import nodes as _n
+        from comfy_extras.nodes_minimax_h3 import temporal_shape
+        from .zoey_minimax_h3_mask import (
+            REPLACE_DEFAULT_PROMPT, _align_frames, _canvas_from_source,
+            _feather_mask, _fit_mask, _grow_mask, _resize_frames, _sam3_track_masks,
+        )
+
+        tray_entries = _parse_ref_tray(tray)
+
+        # 源视频：专用口 > 已连接的参考视频端口（及其配对音轨）> 托盘视频
+        video = refs.get("replace_video")
+        src_audio = refs.get("replace_audio")
+        video_slot = None
+        if video is None:
+            for i in range(_VIDEO_SLOTS):
+                if refs.get(f"ref_video_{i}") is not None:
+                    video = refs.get(f"ref_video_{i}")
+                    video_slot = i
+                    break
+        if video is None:
+            for e in tray_entries:
+                if e["type"] == "video":
+                    video = _load_tray_video(e["file"])
+                    break
+        if video is None:
+            raise ValueError("遮罩替换模式需要源视频：接 replace_video，或在参考视频端口/托盘里放一段视频")
+        if src_audio is None and video_slot is not None:
+            src_audio = refs.get(f"ref_video_audio_{video_slot}")
+        ext_mask = refs.get("replace_mask")
+
+        n_src = int(video.shape[0])
+        n = _align_frames(n_src)
+        if n < n_src:
+            video = video[:n]
+        cw, ch = _canvas_from_source(int(video.shape[2]), int(video.shape[1]), resolution)
+        frames = _resize_frames(video, cw, ch)
+
+        # 参考图：端口 + 托盘（与参考模式同样的 @P 编号顺序）
+        ref_images = {}
+        for i in range(_IMAGE_SLOTS):
+            ref_images[f"ref_image_{i}"] = refs.get(f"ref_image_{i}")
+        tray_imgs, _, _ = _inject_tray(ref_images, {}, {}, [e for e in tray_entries if e["type"] == "image"])
+        tray_img = tray_imgs
+        port_img = sum(1 for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None)
+        counts = count_refs(port_img + tray_img, 0, 0, 0)
+        image_slots = [i for i in range(_IMAGE_SLOTS) if refs.get(f"ref_image_{i}") is not None]
+        image_slots += list(range(_IMAGE_SLOTS, _IMAGE_SLOTS + tray_img))
+
+        # 托盘图片用途并入 ref_purposes
+        if any((e["type"] == "image" and e.get("kind")) for e in tray_entries):
+            try:
+                merged_purposes = json.loads(ref_purposes or "{}")
+            except Exception:
+                merged_purposes = {}
+            if not isinstance(merged_purposes, dict):
+                merged_purposes = {}
+            ti = 0
+            for e in tray_entries:
+                if e["type"] == "image":
+                    if e.get("kind"):
+                        merged_purposes[str(_IMAGE_SLOTS + ti)] = e["kind"]
+                    ti += 1
+            ref_purposes = json.dumps(merged_purposes, ensure_ascii=False)
+
+        # 遮罩：手绘优先，否则 SAM3 文本分割 + 逐帧跟踪
+        if ext_mask is not None:
+            m = _fit_mask(ext_mask, n, ch, cw)
+            mask_src = "手绘遮罩"
+        else:
+            sam_masks = _sam3_track_masks(
+                frames, sam3_model, seg_prompt, detect_threshold, max_objects,
+                object_indices, detect_interval)
+            m = _fit_mask(sam_masks, n, ch, cw)
+            mask_src = f"SAM3:{seg_prompt.strip()}"
+        if invert_mask:
+            m = 1.0 - m
+        m = _grow_mask(m, int(mask_grow))
+        m = _feather_mask(m, int(mask_feather)).clamp(0.0, 1.0)
+        m = m.to(frames.device)
+
+        # 提示词：空则用模板；@ 展开 + 用途标注（不加通用声明行，实测会误导模型）
+        text = (prompt or "").strip() or REPLACE_DEFAULT_PROMPT
+        prompt_text = expand_at_tags(text, counts)
+        purpose_lines = _build_purpose_lines(ref_purposes, image_slots)
+        if purpose_lines:
+            prompt_text = "\n".join(purpose_lines) + "\n" + prompt_text
+        if lock_background:
+            prompt_text = ("Place the subject inside the source video's scene: match its camera angle, scale, "
+                           "perspective, lighting and color palette. Everything outside the replaced subject "
+                           "(background, other people, camera motion, timing and framing) stays exactly as in "
+                           "the source video.\n" + prompt_text)
+
+        used_refs = {k: v for k, v in ref_images.items() if v is not None}
+        outputs = MiniMaxH3ReferenceToVideo.execute(
+            clip=clip, prompt=prompt_text, width=cw, height=ch, length=n,
+            ref_image_size=ref_image_size, vae=vae, audio_vae=audio_vae,
+            ref_images=used_refs or None,
+            ref_videos=None, ref_video_audios=None, ref_audios=None,
+        )
+        cond = outputs.args[0]
+
+        # AV latent：源视频编码 + 遮罩；音频默认保留
+        video_z = vae.encode(frames)
+        audio_t = temporal_shape(n)[2]
+        if src_audio is not None and preserve_audio:
+            if audio_vae is None:
+                raise ValueError("要保留源音频，请选择 audio_vae_name")
+            dur = n / 24.0
+            wf = src_audio["waveform"]
+            want = int(round(dur * src_audio["sample_rate"]))
+            if wf.shape[-1] > want:
+                src_audio = dict(src_audio)
+                src_audio["waveform"] = wf[..., :want]
+            from comfy_extras.nodes_audio import VAEEncodeAudio
+            az = VAEEncodeAudio.execute(audio_vae, src_audio).args[0]["samples"]
+            audio_latent = {"samples": az, "noise_mask": torch.zeros_like(az)}
+        else:
+            az = torch.zeros([1, 32, 2, audio_t],
+                             device=comfy.model_management.intermediate_device())
+            audio_latent = {"samples": az, "noise_mask": torch.ones_like(az)}
+
+        video_latent = {"samples": video_z, "noise_mask": m}
+        from comfy_extras.nodes_lt import LTXVConcatAVLatent
+        latent = LTXVConcatAVLatent.execute(video_latent, audio_latent).args[0]
+
+        latent_image = latent["samples"]
+        noise = _cs.prepare_noise(latent_image, int(seed), None)
+        if negative is None:
+            negative = clip.encode_from_tokens_scheduled(clip.tokenize(""))
+        callback = latent_preview.prepare_callback(model, int(steps))
+        samples = _cs.sample(
+            model, noise, int(steps), float(cfg), sampler_name, scheduler,
+            cond, negative, latent_image,
+            denoise=float(denoise), force_full_denoise=float(denoise) >= 1.0,
+            noise_mask=latent.get("noise_mask"), callback=callback, seed=int(seed))
+
+        frames_out = _n.VAEDecode().decode(vae, {"samples": samples})[0]
+        audio_out = None
+        if audio_vae is not None:
+            from comfy_extras.nodes_audio import VAEDecodeAudio
+            audio_out = VAEDecodeAudio().decode(audio_vae, {"samples": samples})[0]
+
+        settings = json.dumps({
+            "mode": "遮罩替换", "mask": mask_src, "frames": n,
+            "canvas": [cw, ch], "mask_percent": round(float(m.mean()) * 100.0, 1),
+            "steps": int(steps), "cfg": float(cfg), "seed": int(seed),
+        }, ensure_ascii=False)
+        return (model, vae, audio_vae, clip, cond, latent, prompt_text, frames_out, audio_out, settings)
+
+
 # ── 风格下拉选择器（内置多风格 → 输出对应提示词；可选把模板里的 [STYLE] 替换掉） ──
 # 12 种风格整段提示词（数据在 zoey_minimax_h3_styles.py，便于单独维护）
 from .zoey_minimax_h3_styles import STYLE_MAP as _STYLE_MAP
@@ -1630,11 +1911,18 @@ class ZoeyMiniMaxH3Ref2VA_LastSteps:
         import nodes
         # 复用参考节点生成 model(vae/audio_vae) + positive(cond) + latent
         ref_node = ZoeyMiniMaxH3ReferenceToVideo()
-        model, vae, audio_vae, cond, latent_in, prompt_text, _lv_frames = ref_node.process(
-            unet_name, clip_name, vae_name, audio_vae_name, lora_list, loras,
-            prompt, mode, resolution, aspect, duration, ref_image_size, auto_declaration,
-            director_mode, director_shots, library, sage_attention, dialogue_convert,
-            ref_purposes, layout, layout_enabled, **refs)
+        # 全关键字传参：基座的 process 里 tray 夹在 library 和 sage_attention 之间，
+        # 按位置传会从 tray 起整体错位一格
+        model, vae, audio_vae, _clip, cond, latent_in, prompt_text, _frames, _audio, _settings = ref_node.process(
+            unet_name=unet_name, clip_name=clip_name, vae_name=vae_name,
+            audio_vae_name=audio_vae_name, lora_list=lora_list, loras=loras,
+            prompt=prompt, mode=mode, resolution=resolution, aspect=aspect,
+            duration=duration, ref_image_size=ref_image_size,
+            auto_declaration=auto_declaration, director_mode=director_mode,
+            director_shots=director_shots, library=library,
+            sage_attention=sage_attention, dialogue_convert=dialogue_convert,
+            ref_purposes=ref_purposes, layout=layout, layout_enabled=layout_enabled,
+            **refs)
 
         # 无 last_lora 或 last_steps==0：纯基座，一次采样到底
         if last_lora_name == _NONE or last_steps <= 0:
@@ -1659,114 +1947,10 @@ class ZoeyMiniMaxH3Ref2VA_LastSteps:
             info = prompt_text.replace("\n", " ") + " ｜ " + info
 
         # 视频 latent 解码出视频帧（可直接接 VideoCombine）
-        frames = nodes.VAEDecode().decode(out["samples"], vae)[0]
+        frames = nodes.VAEDecode().decode(vae, out)[0]
         return (out, frames, info)
 
 
-class ZoeyMiniMaxH3LongVideo:
-    """长视频驱动节点：复用主节点已加载 model/vae/audio_vae，自己加载 clip，逐段提示词、末帧续接、按序拼接。
-
-    接法：主节点出 model/vae/audio_vae/视频帧/音频 给本节点；本节点内部循环调用主节点生成逻辑——
-    每轮把上一段末尾帧返回给主节点生成逻辑当参考图，采样出下一段（用户逐段填提示词）。全部完成后
-    torch.cat 拼帧 + 音频按序拼接 → IMAGE+AUDIO → 外置 VHS VideoCombine 出 mp4。
-    画布/时长/步数由主节点首帧形状自动推导（无需重复填写采样/时长/分辨率）。
-    """
-    @classmethod
-    def INPUT_TYPES(cls):
-        opt = {
-            "first_frames": ("IMAGE", {"tooltip": "主节点「视频帧」输出：第1段 + 末帧续接的种子"}),
-            "first_audio": ("AUDIO", {"tooltip": "主节点「音频」输出（可选；无音频则输出纯视频）"}),
-            "negative": ("CONDITIONING",),
-        }
-        for i in range(_IMAGE_SLOTS):
-            opt[f"ref_image_{i}"] = ("IMAGE",)
-        for i in range(_VIDEO_SLOTS):
-            opt[f"ref_video_{i}"] = ("IMAGE",)
-            opt[f"ref_video_audio_{i}"] = ("AUDIO",)
-        for i in range(_AUDIO_SLOTS):
-            opt[f"ref_audio_{i}"] = ("AUDIO",)
-        return {
-            "required": {
-                "model": ("MODEL", {"tooltip": "主节点「model」输出（复用已加载模型，不重复加载）"}),
-                "vae": ("VAE", {"tooltip": "主节点「vae」输出"}),
-                "audio_vae": ("VAE", {"tooltip": "主节点「audio_vae」输出（无音频可为空）"}),
-                "clip": ("CLIP", {"tooltip": "主节点「clip」输出（post-LoRA，直接复用）"}),
-                "settings": ("STRING", {"multiline": True,
-                                        "tooltip": "主节点「设置」输出：steps/cfg/sampler_name/scheduler/seed，自动同步采样参数"}),
-                "segments": ("INT", {"default": 2, "min": 1, "max": 40,
-                                     "tooltip": "总段数：第1段用主节点首帧，此节点续接 2..N。"}),
-            },
-            "optional": {
-                **opt,
-                # 固定槽位：第2段起每段一个提示词框（最多40段→39个）。前端按 segments 用 toggleWidget 显示/隐藏，
-                # 预定义而非运行时增删，保证 widget 列表恒定 → widgets_values 不串位、序列化稳定。
-                **{f"prompt_{i}": ("STRING", {"multiline": True, "default": "",
-                                             "tooltip": f"第 {i + 2} 段提示词"}) for i in range(39)},
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE", "AUDIO")
-    RETURN_NAMES = ("视频帧", "音频")
-    FUNCTION = "process"
-    CATEGORY = "Zoey Tool/MiniMax H3"
-    OUTPUT_NODE = True
-
-    def process(self, model, vae, audio_vae, clip, settings="{}", segments=2,
-                first_frames=None, first_audio=None, negative=None, **kwargs):
-        import torch, json
-        segments = max(1, int(segments or 2))
-        if first_frames is None:
-            raise ValueError("长视频节点需要接入主节点「视频帧」作为第1段。")
-        sp = {}
-        try:
-            sp = json.loads(settings or "{}")
-        except Exception:
-            sp = {}
-        if not isinstance(sp, dict):
-            sp = {}
-        steps = int(sp.get("steps", 25) or 25)
-        cfg = float(sp.get("cfg", 4.0) or 4.0)
-        sampler_name = sp.get("sampler_name", "res_multistep") or "res_multistep"
-        scheduler = sp.get("scheduler", "simple") or "simple"
-        seed = int(sp.get("seed", 0) or 0)
-        # 第2段起每段一个提示词框（前端按 segments 显示/隐藏 prompt_0..N）；留空 = 沿用上一段（链式续写）
-        plist = [kwargs.get(f"prompt_{i}", "") or "" for i in range(max(0, segments - 1))]
-        # 画布 + 每段帧数：直接从主节点首段帧推导，保证各段能拼接
-        H, W = first_frames.shape[1], first_frames.shape[2]
-        dur = first_frames.shape[0] / 24.0
-        # 参考素材：与主节点同源接入（保留全部人物/场景/音频），后门透传给 _segment
-        refs = {k: v for k, v in kwargs.items() if k.startswith("ref_") and v is not None}
-        ref_node = ZoeyMiniMaxH3ReferenceToVideo()
-        seg_frames = [first_frames]
-        seg_audios = [first_audio] if first_audio is not None else []
-        prev = first_frames[-1:]
-        last_prompt = ""
-        for i in range(2, segments + 1):
-            idx = i - 2
-            p = plist[idx] if idx < len(plist) else ""
-            if not (p or "").strip():
-                p = last_prompt  # 该段提示词留空 → 沿用上一段（链式续写）
-            last_prompt = p
-            _m, _v, _av, _c, _cond, _lat, _info, fr, au, _set = ref_node._segment(
-                model=model, clip=clip, vae=vae, audio_vae=audio_vae,
-                prompt=p, mode="参考", resolution="自动", aspect="自动", duration=dur,
-                ref_image_size="match", auto_declaration=False, director_mode=False,
-                director_shots="[]", library="", tray="[]", sage_attention=False,
-                dialogue_convert=True, ref_purposes="{}", layout="{}", layout_enabled=False,
-                negative=negative, seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name,
-                scheduler=scheduler, last_lora_name=_NONE, last_lora_strength=1.0,
-                last_lora_clip=0.0, last_steps=0, width_override=W, height_override=H,
-                prev_frame=prev, **refs)
-            seg_frames.append(fr)
-            if au is not None:
-                seg_audios.append(au)
-            prev = fr[-1:]
-        out = torch.cat(seg_frames, dim=0)
-        audio = None
-        if len(seg_audios) == segments and all(a is not None for a in seg_audios):
-            audio = dict(seg_audios[0])
-            audio["waveform"] = torch.cat([a["waveform"] for a in seg_audios], dim=-1)
-        return (out, audio)
 
 
 NODE_CLASS_MAPPINGS = {}
@@ -1778,6 +1962,4 @@ NODE_DISPLAY_NAME_MAPPINGS["ZoeyStylePrompt"] = "Zoey - 风格下拉选择 (@)"
 if _H3_AVAILABLE:
     NODE_CLASS_MAPPINGS["ZoeyMiniMaxH3ReferenceToVideo"] = ZoeyMiniMaxH3ReferenceToVideo
     NODE_DISPLAY_NAME_MAPPINGS["ZoeyMiniMaxH3ReferenceToVideo"] = "Zoey - MiniMax H3 参考转视频 (@)"
-    NODE_CLASS_MAPPINGS["ZoeyMiniMaxH3LongVideo"] = ZoeyMiniMaxH3LongVideo
-    NODE_DISPLAY_NAME_MAPPINGS["ZoeyMiniMaxH3LongVideo"] = "Zoey - MiniMax H3 长视频 (循环·末帧续接)"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
